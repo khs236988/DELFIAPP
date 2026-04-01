@@ -1,0 +1,5 @@
+{
+  "name": "DELFI",
+  "description": "태블릿 학습 환경에 최적화된 매일 진행하는 피드백 DELFI",
+  "requestFramePermissions": ["camera"]
+}
