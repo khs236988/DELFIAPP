@@ -1,1583 +1,1187 @@
-import { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
+import {
+  Bell,
+  Download,
+  FileText,
+  Home,
+  Inbox,
+  Loader2,
+  LogOut,
+  MessageSquare,
+  Plus,
+  Search,
+  Upload,
+  User,
+  Users,
+} from "lucide-react";
 import { auth, db } from "./firebase";
-import {
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword,
-  signOut,
-  onAuthStateChanged,
-} from "firebase/auth";
-import {
-  addDoc,
-  collection,
-  doc,
-  getDoc,
-  getDocs,
-  setDoc,
-  updateDoc,
-} from "firebase/firestore";
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
+import { doc, getDoc } from "firebase/firestore";
 
-type Passage = {
-  id: string;
-  title: string;
-  text: string;
-};
-
-type Question = {
-  id: string;
-  passageId: string;
-  questionText: string;
-  choices: string[];
-  correctAnswer: number; // 0~4
-};
+type Role = "admin" | "student";
+type AssignmentStatus = "assigned" | "submitted" | "feedback_done";
+type StudentStatus = "active" | "paused" | "ended";
 
 type Assignment = {
   id: string;
   title: string;
-  pdfName: string;
-  createdBy: string;
-  createdByEmail: string;
   assignedTo: string;
+  assignedStudentName: string;
+  assignedStudentGrade: "고1" | "고2" | "고3" | "N수";
+  dueDate: string;
   createdAt: string;
-  passages: Passage[];
-  questions: Question[];
+  pdfName: string;
+  status: AssignmentStatus;
 };
 
 type Submission = {
   id: string;
-  assignmentId: string;
-  assignmentTitle: string;
-  studentId: string;
+  studentName: string;
   studentEmail: string;
-  answers: Record<string, number>;
+  assignmentTitle: string;
   submittedAt: string;
-  score: number;
-  totalQuestions: number;
-  feedback: string;
-  percentage: number;
-  resultDetails: {
-    questionId: string;
-    questionText: string;
-    studentAnswer: number;
-    correctAnswer: number;
-    isCorrect: boolean;
-    passageId: string;
-  }[];
+  status: "submitted" | "feedback_done";
 };
 
-function App() {
-  const [email, setEmail] = useState("");
-  const [password, setPassword] = useState("");
+type FeedbackItem = {
+  id: string;
+  assignmentTitle: string;
+  studentName: string;
+  createdAt: string;
+  status: "waiting" | "completed";
+  isRead: boolean;
+  summary: string;
+};
 
-  const [message, setMessage] = useState("");
-  const [loading, setLoading] = useState(true);
+type StudentRecord = {
+  id: string;
+  name: string;
+  grade: "고1" | "고2" | "고3" | "N수";
+  email: string;
+  school?: string;
+  phone?: string;
+  status: StudentStatus;
+  activeAssignments: number;
+  submittedCount: number;
+  feedbackDoneCount: number;
+};
 
-  const [currentUserEmail, setCurrentUserEmail] = useState("");
-  const [currentUserUid, setCurrentUserUid] = useState("");
-  const [userRole, setUserRole] = useState("");
+type NavItem = {
+  key: string;
+  label: string;
+  icon: React.ComponentType<{ className?: string }>;
+};
 
-  const [assignments, setAssignments] = useState<Assignment[]>([]);
-  const [submissions, setSubmissions] = useState<Submission[]>([]);
-  const [feedbackInputs, setFeedbackInputs] = useState<Record<string, string>>({});
+const adminNav: NavItem[] = [
+  { key: "dashboard", label: "대시보드", icon: Home },
+  { key: "assignments", label: "과제 관리", icon: FileText },
+  { key: "submissions", label: "제출 관리", icon: Inbox },
+  { key: "feedback", label: "피드백 관리", icon: MessageSquare },
+  { key: "students", label: "학생 관리", icon: Users },
+];
 
-  // 관리자 - 과제 생성
-  const [assignmentTitle, setAssignmentTitle] = useState("");
-  const [assignedEmail, setAssignedEmail] = useState("");
-  const [pdfName, setPdfName] = useState("");
+const studentNav: NavItem[] = [
+  { key: "assignments", label: "내 과제", icon: FileText },
+  { key: "submissions", label: "제출 내역", icon: Inbox },
+  { key: "feedback", label: "피드백", icon: MessageSquare },
+  { key: "profile", label: "내 정보", icon: User },
+];
 
-  // 관리자 - 지문 등록
-  const [passageTitle, setPassageTitle] = useState("");
-  const [passageText, setPassageText] = useState("");
-  const [draftPassages, setDraftPassages] = useState<Passage[]>([]);
+const mockStudents: StudentRecord[] = [
+  {
+    id: "u1",
+    name: "김민지",
+    grade: "고3",
+    email: "minji@example.com",
+    school: "대원고",
+    phone: "010-1111-2222",
+    status: "active",
+    activeAssignments: 2,
+    submittedCount: 10,
+    feedbackDoneCount: 8,
+  },
+  {
+    id: "u2",
+    name: "이준호",
+    grade: "N수",
+    email: "junho@example.com",
+    school: "-",
+    phone: "010-2222-3333",
+    status: "active",
+    activeAssignments: 1,
+    submittedCount: 8,
+    feedbackDoneCount: 7,
+  },
+  {
+    id: "u3",
+    name: "박서연",
+    grade: "고2",
+    email: "seoyeon@example.com",
+    school: "세화고",
+    phone: "010-3333-4444",
+    status: "paused",
+    activeAssignments: 3,
+    submittedCount: 12,
+    feedbackDoneCount: 11,
+  },
+];
 
-  // 관리자 - 문제 등록
-  const [selectedPassageId, setSelectedPassageId] = useState("");
-  const [questionText, setQuestionText] = useState("");
-  const [choice1, setChoice1] = useState("");
-  const [choice2, setChoice2] = useState("");
-  const [choice3, setChoice3] = useState("");
-  const [choice4, setChoice4] = useState("");
-  const [choice5, setChoice5] = useState("");
-  const [correctAnswer, setCorrectAnswer] = useState("1");
-  const [draftQuestions, setDraftQuestions] = useState<Question[]>([]);
+const mockAssignments: Assignment[] = [
+  {
+    id: "a1",
+    title: "4월 1주차 독서 과제",
+    assignedTo: "minji@example.com",
+    assignedStudentName: "김민지",
+    assignedStudentGrade: "고3",
+    dueDate: "2026-04-14",
+    createdAt: "2026-04-11",
+    pdfName: "4월_1주차_독서.pdf",
+    status: "assigned",
+  },
+  {
+    id: "a2",
+    title: "비문학 Daily 07",
+    assignedTo: "junho@example.com",
+    assignedStudentName: "이준호",
+    assignedStudentGrade: "N수",
+    dueDate: "2026-04-13",
+    createdAt: "2026-04-10",
+    pdfName: "daily_07.pdf",
+    status: "submitted",
+  },
+  {
+    id: "a3",
+    title: "문학 선지 판단 훈련",
+    assignedTo: "seoyeon@example.com",
+    assignedStudentName: "박서연",
+    assignedStudentGrade: "고2",
+    dueDate: "2026-04-12",
+    createdAt: "2026-04-09",
+    pdfName: "문학_선지_훈련.pdf",
+    status: "feedback_done",
+  },
+];
 
-  // 학생 풀이
-  const [selectedAssignment, setSelectedAssignment] = useState<Assignment | null>(null);
-  const [studentAnswers, setStudentAnswers] = useState<Record<string, number>>({});
-  const [lastSubmissionResult, setLastSubmissionResult] = useState<Submission | null>(null);
+const mockSubmissions: Submission[] = [
+  {
+    id: "s1",
+    studentName: "김민지",
+    studentEmail: "minji@example.com",
+    assignmentTitle: "4월 1주차 독서 과제",
+    submittedAt: "2026-04-11 21:10",
+    status: "submitted",
+  },
+  {
+    id: "s2",
+    studentName: "이준호",
+    studentEmail: "junho@example.com",
+    assignmentTitle: "비문학 Daily 07",
+    submittedAt: "2026-04-11 19:45",
+    status: "feedback_done",
+  },
+];
 
-  const loadAssignments = async () => {
-    const snapshot = await getDocs(collection(db, "assignments"));
-    const list: Assignment[] = [];
+const mockFeedback: FeedbackItem[] = [
+  {
+    id: "f1",
+    assignmentTitle: "4월 1주차 독서 과제",
+    studentName: "김민지",
+    createdAt: "2026-04-11",
+    status: "waiting",
+    isRead: false,
+    summary:
+      "문단별 핵심 요약은 좋아졌지만, 선지 판단 근거를 더 명확히 적어야 합니다.",
+  },
+  {
+    id: "f2",
+    assignmentTitle: "문학 선지 판단 훈련",
+    studentName: "박서연",
+    createdAt: "2026-04-10",
+    status: "completed",
+    isRead: true,
+    summary: "보기 해석은 좋아졌고, 오답 선지 제거 속도를 더 올리면 좋겠습니다.",
+  },
+];
 
-    snapshot.forEach((docItem) => {
-      const data = docItem.data() as Omit<Assignment, "id">;
-      list.push({
-        id: docItem.id,
-        ...data,
-      });
-    });
-
-    setAssignments(list);
+function StatusBadge({ status }: { status: string }) {
+  const colorMap: Record<string, string> = {
+    assigned: "bg-slate-100 text-slate-700",
+    submitted: "bg-blue-50 text-blue-700",
+    feedback_done: "bg-violet-50 text-violet-700",
+    waiting: "bg-amber-50 text-amber-700",
+    completed: "bg-emerald-50 text-emerald-700",
+    active: "bg-emerald-50 text-emerald-700",
+    paused: "bg-amber-50 text-amber-700",
+    ended: "bg-slate-100 text-slate-700",
   };
 
-  const loadSubmissions = async () => {
-    const snapshot = await getDocs(collection(db, "submissions"));
-    const list: Submission[] = [];
-
-    snapshot.forEach((docItem) => {
-      const data = docItem.data() as Omit<Submission, "id">;
-      list.push({
-        id: docItem.id,
-        ...data,
-      });
-    });
-
-    setSubmissions(list);
+  const labelMap: Record<string, string> = {
+    assigned: "미제출",
+    submitted: "제출완료",
+    feedback_done: "피드백완료",
+    waiting: "피드백 대기",
+    completed: "피드백 완료",
+    active: "수강중",
+    paused: "일시중지",
+    ended: "종료",
   };
-
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      try {
-        if (user) {
-          setCurrentUserEmail(user.email || "");
-          setCurrentUserUid(user.uid);
-
-          const userRef = doc(db, "users", user.uid);
-          const userSnap = await getDoc(userRef);
-
-          if (userSnap.exists()) {
-            const userData = userSnap.data();
-            setUserRole(userData.role || "student");
-          } else {
-            setUserRole("student");
-          }
-
-          await loadAssignments();
-          await loadSubmissions();
-        } else {
-          setCurrentUserEmail("");
-          setCurrentUserUid("");
-          setUserRole("");
-          setAssignments([]);
-          setSubmissions([]);
-          setSelectedAssignment(null);
-          setStudentAnswers({});
-          setLastSubmissionResult(null);
-        }
-      } catch (error: any) {
-        setMessage("초기 로딩 실패: " + error.message);
-      } finally {
-        setLoading(false);
-      }
-    });
-
-    return () => unsubscribe();
-  }, []);
-
-  const handleSignup = async () => {
-    try {
-      const userCredential = await createUserWithEmailAndPassword(auth, email, password);
-
-      await setDoc(doc(db, "users", userCredential.user.uid), {
-        email: userCredential.user.email,
-        role: "student",
-        createdAt: new Date().toISOString(),
-      });
-
-      setMessage(`회원가입 성공: ${userCredential.user.email}`);
-    } catch (error: any) {
-      setMessage(`회원가입 실패: ${error.message}`);
-    }
-  };
-
-  const handleLogin = async () => {
-    try {
-      const userCredential = await signInWithEmailAndPassword(auth, email, password);
-      setMessage(`로그인 성공: ${userCredential.user.email}`);
-    } catch (error: any) {
-      setMessage(`로그인 실패: ${error.message}`);
-    }
-  };
-
-  const handleLogout = async () => {
-    try {
-      await signOut(auth);
-      setMessage("로그아웃 성공");
-    } catch (error: any) {
-      setMessage(`로그아웃 실패: ${error.message}`);
-    }
-  };
-
-  const handlePdfPick = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      setPdfName(file.name);
-      setMessage(`PDF 선택됨: ${file.name}`);
-    }
-  };
-
-  const handleAddPassage = () => {
-    if (!passageTitle.trim()) {
-      setMessage("지문 제목을 입력하세요.");
-      return;
-    }
-
-    if (!passageText.trim()) {
-      setMessage("지문 내용을 입력하세요.");
-      return;
-    }
-
-    const newPassage: Passage = {
-      id: Date.now().toString(),
-      title: passageTitle,
-      text: passageText,
-    };
-
-    setDraftPassages((prev) => [...prev, newPassage]);
-
-    if (!selectedPassageId) {
-      setSelectedPassageId(newPassage.id);
-    }
-
-    setPassageTitle("");
-    setPassageText("");
-    setMessage("지문 추가 완료");
-  };
-
-  const handleAddQuestion = () => {
-    if (draftPassages.length === 0) {
-      setMessage("지문을 하나 이상 추가해야 합니다.");
-      return;
-    }
-
-    if (!selectedPassageId) {
-      setMessage("문제를 연결할 지문을 선택하세요.");
-      return;
-    }
-
-    if (!questionText.trim()) {
-      setMessage("문제 내용을 입력하세요.");
-      return;
-    }
-
-    if (
-      !choice1.trim() ||
-      !choice2.trim() ||
-      !choice3.trim() ||
-      !choice4.trim() ||
-      !choice5.trim()
-    ) {
-      setMessage("선지 5개를 모두 입력하세요.");
-      return;
-    }
-
-    const newQuestion: Question = {
-      id: Date.now().toString(),
-      passageId: selectedPassageId,
-      questionText,
-      choices: [choice1, choice2, choice3, choice4, choice5],
-      correctAnswer: Number(correctAnswer) - 1,
-    };
-
-    setDraftQuestions((prev) => [...prev, newQuestion]);
-
-    setQuestionText("");
-    setChoice1("");
-    setChoice2("");
-    setChoice3("");
-    setChoice4("");
-    setChoice5("");
-    setCorrectAnswer("1");
-    setMessage("문제 추가 완료");
-  };
-
-  const handleCreateAssignment = async () => {
-    if (!assignmentTitle.trim()) {
-      setMessage("과제 제목을 입력하세요.");
-      return;
-    }
-
-    if (draftPassages.length === 0) {
-      setMessage("최소 1개 이상의 지문이 필요합니다.");
-      return;
-    }
-
-    if (draftQuestions.length === 0) {
-      setMessage("최소 1개 이상의 문제가 필요합니다.");
-      return;
-    }
-
-    try {
-      await addDoc(collection(db, "assignments"), {
-        title: assignmentTitle,
-        pdfName,
-        assignedTo: assignedEmail,
-        createdBy: currentUserUid,
-        createdByEmail: currentUserEmail,
-        createdAt: new Date().toISOString(),
-        passages: draftPassages,
-        questions: draftQuestions,
-      });
-
-      setAssignmentTitle("");
-      setPdfName("");
-      setDraftPassages([]);
-      setDraftQuestions([]);
-      setSelectedPassageId("");
-      setMessage("과제 저장 성공");
-      await loadAssignments();
-    } catch (error: any) {
-      setMessage(`과제 저장 실패: ${error.message}`);
-    }
-  };
-
-  const handleSelectAnswer = (questionId: string, choiceIndex: number) => {
-    setStudentAnswers((prev) => ({
-      ...prev,
-      [questionId]: choiceIndex,
-    }));
-  };
-
-  const handleSubmitAssignment = async () => {
-    if (!selectedAssignment) return;
-
-    if (selectedAssignment.questions.length === 0) {
-      setMessage("문제가 없는 과제입니다.");
-      return;
-    }
-
-    for (const q of selectedAssignment.questions) {
-      if (studentAnswers[q.id] === undefined) {
-        setMessage("모든 문제에 답해야 제출할 수 있습니다.");
-        return;
-      }
-    }
-
-    try {
-      let score = 0;
-
-      const resultDetails = selectedAssignment.questions.map((q) => {
-        const studentAnswer = studentAnswers[q.id];
-        const isCorrect = studentAnswer === q.correctAnswer;
-        if (isCorrect) score += 1;
-
-        return {
-          questionId: q.id,
-          questionText: q.questionText,
-          studentAnswer,
-          correctAnswer: q.correctAnswer,
-          isCorrect,
-          passageId: q.passageId,
-        };
-      });
-
-      const totalQuestions = selectedAssignment.questions.length;
-      const percentage = Math.round((score / totalQuestions) * 100);
-
-      const submissionData = {
-        assignmentId: selectedAssignment.id,
-        assignmentTitle: selectedAssignment.title,
-        studentId: currentUserUid,
-        studentEmail: currentUserEmail,
-        answers: studentAnswers,
-        submittedAt: new Date().toISOString(),
-        feedback: "",
-        score,
-        totalQuestions,
-        percentage,
-        resultDetails,
-      };
-
-      const docRef = await addDoc(collection(db, "submissions"), submissionData);
-
-      const resultWithId: Submission = {
-        id: docRef.id,
-        ...submissionData,
-      };
-
-      setLastSubmissionResult(resultWithId);
-      setMessage("제출 완료");
-      setSelectedAssignment(null);
-      setStudentAnswers({});
-      await loadSubmissions();
-    } catch (error: any) {
-      setMessage(`제출 실패: ${error.message}`);
-    }
-  };
-
-  const stats = useMemo(() => {
-    const totalAssignments = assignments.length;
-    const totalSubmissions = submissions.length;
-    const avgScore =
-      submissions.length > 0
-        ? Math.round(
-            submissions.reduce((sum, item) => sum + item.percentage, 0) / submissions.length
-          )
-        : 0;
-
-    return { totalAssignments, totalSubmissions, avgScore };
-  }, [assignments, submissions]);
-
-  const getPassageTitle = (assignment: Assignment, passageId: string) => {
-    return assignment.passages.find((p) => p.id === passageId)?.title || "지문";
-  };
-
-  if (loading) {
-    return (
-      <div style={styles.appShell}>
-        <div style={styles.centerCard}>
-          <h2 style={styles.centerTitle}>불러오는 중...</h2>
-          <p style={styles.muted}>데이터를 가져오고 있습니다.</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentUserEmail && userRole === "admin") {
-    return (
-      <div style={styles.appShell}>
-        <div style={styles.dashboardWrap}>
-          <div style={styles.topBar}>
-            <div>
-              <div style={styles.badgeBlue}>관리자 모드</div>
-              <h1 style={styles.pageTitle}>DELFI 콘텐츠 등록</h1>
-              <p style={styles.subText}>
-                {currentUserEmail} · 지문/문항 등록
-              </p>
-            </div>
-            <button style={styles.ghostButton} onClick={handleLogout}>
-              로그아웃
-            </button>
-          </div>
-
-          {!!message && <div style={styles.notice}>{message}</div>}
-
-          <div style={styles.statsGrid}>
-            <div style={styles.statCard}>
-              <div style={styles.statLabel}>등록된 과제</div>
-              <div style={styles.statValue}>{stats.totalAssignments}</div>
-            </div>
-            <div style={styles.statCard}>
-              <div style={styles.statLabel}>총 제출 수</div>
-              <div style={styles.statValue}>{stats.totalSubmissions}</div>
-            </div>
-            <div style={styles.statCard}>
-              <div style={styles.statLabel}>평균 정답률</div>
-              <div style={styles.statValue}>{stats.avgScore}%</div>
-            </div>
-          </div>
-
-          <div style={styles.twoCol}>
-            <div style={styles.card}>
-              <h2 style={styles.cardTitle}>1. 과제 기본 정보</h2>
-              <p style={styles.cardDesc}>PDF를 참고해서 과제 세트 만들기.</p>
-
-              <input
-                type="text"
-                placeholder="예: 2025 6월 모의고사 독서 1세트"
-                value={assignmentTitle}
-                onChange={(e) => setAssignmentTitle(e.target.value)}
-                style={styles.input}
-              />
-
-              <input
-  type="text"
-  placeholder="배정할 학생 이메일"
-  value={assignedEmail}
-  onChange={(e) => setAssignedEmail(e.target.value)}
-  style={styles.input}
-/>
-              
-              <div style={styles.pdfBox}>
-                <div style={styles.pdfLabel}>PDF 참고 파일</div>
-                <input type="file" accept="application/pdf" onChange={handlePdfPick} />
-                <div style={styles.pdfFileName}>
-                  {pdfName ? `선택된 PDF: ${pdfName}` : "아직 선택된 PDF 없음"}
-                </div>
-              </div>
-            </div>
-
-            <div style={styles.card}>
-              <h2 style={styles.cardTitle}>2. 지문 등록</h2>
-              <p style={styles.cardDesc}>PDF를 보면서 지문 제목과 내용을 추가하세요.</p>
-
-              <input
-                type="text"
-                placeholder="지문 제목 (예: [지문 1] 데이터 경제)"
-                value={passageTitle}
-                onChange={(e) => setPassageTitle(e.target.value)}
-                style={styles.input}
-              />
-
-              <textarea
-                placeholder="지문 내용을 붙여넣기"
-                value={passageText}
-                onChange={(e) => setPassageText(e.target.value)}
-                style={styles.largeTextarea}
-              />
-
-              <button style={styles.secondaryButton} onClick={handleAddPassage}>
-                지문 추가
-              </button>
-            </div>
-          </div>
-
-          <div style={styles.twoCol}>
-            <div style={styles.card}>
-              <h2 style={styles.cardTitle}>3. 문제 등록</h2>
-              <p style={styles.cardDesc}>어느 지문에 달린 문제인지 연결해서 입력하세요.</p>
-
-              <div style={styles.inlineFieldColumn}>
-                <span style={styles.inlineLabel}>연결할 지문 선택</span>
-                <select
-                  value={selectedPassageId}
-                  onChange={(e) => setSelectedPassageId(e.target.value)}
-                  style={styles.selectWide}
-                >
-                  <option value="">지문 선택</option>
-                  {draftPassages.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.title}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <textarea
-                placeholder="문제 내용을 입력하세요"
-                value={questionText}
-                onChange={(e) => setQuestionText(e.target.value)}
-                style={styles.textarea}
-              />
-
-              <div style={styles.choiceGrid}>
-                <input
-                  type="text"
-                  placeholder="선지 1"
-                  value={choice1}
-                  onChange={(e) => setChoice1(e.target.value)}
-                  style={styles.input}
-                />
-                <input
-                  type="text"
-                  placeholder="선지 2"
-                  value={choice2}
-                  onChange={(e) => setChoice2(e.target.value)}
-                  style={styles.input}
-                />
-                <input
-                  type="text"
-                  placeholder="선지 3"
-                  value={choice3}
-                  onChange={(e) => setChoice3(e.target.value)}
-                  style={styles.input}
-                />
-                <input
-                  type="text"
-                  placeholder="선지 4"
-                  value={choice4}
-                  onChange={(e) => setChoice4(e.target.value)}
-                  style={styles.input}
-                />
-                <input
-                  type="text"
-                  placeholder="선지 5"
-                  value={choice5}
-                  onChange={(e) => setChoice5(e.target.value)}
-                  style={styles.input}
-                />
-              </div>
-
-              <div style={styles.rowBetween}>
-                <div style={styles.inlineField}>
-                  <span style={styles.inlineLabel}>정답</span>
-                  <select
-                    value={correctAnswer}
-                    onChange={(e) => setCorrectAnswer(e.target.value)}
-                    style={styles.select}
-                  >
-                    <option value="1">1번</option>
-                    <option value="2">2번</option>
-                    <option value="3">3번</option>
-                    <option value="4">4번</option>
-                    <option value="5">5번</option>
-                  </select>
-                </div>
-
-                <button style={styles.secondaryButton} onClick={handleAddQuestion}>
-                  문제 추가
-                </button>
-              </div>
-            </div>
-
-            <div style={styles.card}>
-              <h2 style={styles.cardTitle}>4. 저장 전 미리보기</h2>
-              <p style={styles.cardDesc}>지문과 문항 구조가 잘 잡혔는지 확인하세요.</p>
-
-              <div style={styles.previewSection}>
-                <h3 style={styles.sectionTitle}>등록된 지문</h3>
-                {draftPassages.length === 0 ? (
-                  <div style={styles.emptyBox}>아직 추가된 지문이 없습니다.</div>
-                ) : (
-                  <div style={styles.listStack}>
-                    {draftPassages.map((p, index) => (
-                      <div key={p.id} style={styles.passagePreviewCard}>
-                        <div style={styles.questionIndex}>지문 {index + 1}</div>
-                        <div style={styles.assignmentTitle}>{p.title}</div>
-                        <div style={styles.passageTextPreview}>{p.text}</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <div style={styles.previewSection}>
-                <h3 style={styles.sectionTitle}>등록된 문제</h3>
-                {draftQuestions.length === 0 ? (
-                  <div style={styles.emptyBox}>아직 추가된 문제가 없음</div>
-                ) : (
-                  <div style={styles.listStack}>
-                    {draftQuestions.map((q, index) => (
-                      <div key={q.id} style={styles.questionPreviewCard}>
-                        <div style={styles.questionIndex}>문제 {index + 1}</div>
-                        <div style={styles.assignmentMeta}>
-                          연결 지문: {getPassageTitle({ id: "", title: "", pdfName: "", createdAt: "", createdBy: "", createdByEmail: "", passages: draftPassages, questions: draftQuestions }, q.passageId)}
-                        </div>
-                        <div style={styles.questionText}>{q.questionText}</div>
-                        <div style={styles.choiceList}>
-                          {q.choices.map((choice, i) => (
-                            <div key={i} style={styles.choiceItem}>
-                              {i + 1}번. {choice}
-                            </div>
-                          ))}
-                        </div>
-                        <div style={styles.answerChip}>정답 {q.correctAnswer + 1}번</div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-
-              <button style={styles.primaryButton} onClick={handleCreateAssignment}>
-                과제 최종 저장
-              </button>
-            </div>
-          </div>
-
-          <div style={styles.twoCol}>
-            <div style={styles.card}>
-              <h2 style={styles.cardTitle}>등록된 과제 목록</h2>
-              <p style={styles.cardDesc}>실제 학생에게 보이는 문제 세트 목록.</p>
-
-              {assignments.length === 0 ? (
-                <div style={styles.emptyBox}>아직 등록된 과제가 없음</div>
-              ) : (
-                <div style={styles.listStack}>
-                  {assignments
-  .filter((item) => item.assignedTo === currentUserEmail)
-  .map((item) => (
-                    <div key={item.id} style={styles.assignmentCard}>
-                      <div>
-                        <div style={styles.assignmentTitle}>{item.title}</div>
-                        <div style={styles.assignmentMeta}>
-                          PDF: {item.pdfName || "없음"} · 지문 {item.passages?.length || 0}개 · 문제 {item.questions?.length || 0}개
-                        </div>
-                      </div>
-                      <div style={styles.badgeLight}>{item.questions?.length || 0}문항</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            <div style={styles.card}>
-              <h2 style={styles.cardTitle}>학생 제출 결과</h2>
-              <p style={styles.cardDesc}>제출 학생 목록과 점수입니다.</p>
-
-              {submissions.length === 0 ? (
-                <div style={styles.emptyBox}>아직 제출된 답안이 없음</div>
-              ) : (
-                <div style={styles.listStack}>
-                  {submissions.map((submission) => (
-                    <div key={submission.id} style={styles.resultCard}>
-                      <div style={styles.resultHeader}>
-                        <div>
-                          <div style={styles.assignmentTitle}>{submission.assignmentTitle}</div>
-                          <div style={styles.assignmentMeta}>{submission.studentEmail}</div>
-                        </div>
-                        <div style={styles.scoreBadge}>{submission.percentage}%</div>
-                      </div>
-
-                      <div style={styles.resultMetaRow}>
-                        <span>점수 {submission.score}/{submission.totalQuestions}</span>
-                        <span>{formatDate(submission.submittedAt)}</span>
-                      </div>
-                      <div style={{ marginTop: 14 }}>
-  <textarea
-    placeholder="피드백 입력"
-    value={feedbackInputs[submission.id] ?? submission.feedback ?? ""}
-    onChange={(e) =>
-      setFeedbackInputs({
-        ...feedbackInputs,
-        [submission.id]: e.target.value,
-      })
-    }
-    style={styles.feedbackTextarea}
-  />
-
-  <button
-    style={{ ...styles.primaryButton, marginTop: 10 }}
-    onClick={async () => {
-      const feedbackValue = feedbackInputs[submission.id] ?? "";
-
-      await updateDoc(doc(db, "submissions", submission.id), {
-        feedback: feedbackValue,
-      });
-
-      setMessage("피드백 저장 완료");
-      await loadSubmissions();
-    }}
-  >
-    피드백 저장
-  </button>
-</div>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentUserEmail && userRole === "student" && lastSubmissionResult) {
-    return (
-      <div style={styles.appShell}>
-        <div style={styles.studentWrap}>
-          <div style={styles.topBar}>
-            <div>
-              <div style={styles.badgeBlue}>제출 결과</div>
-              <h1 style={styles.pageTitle}>{lastSubmissionResult.assignmentTitle}</h1>
-              <p style={styles.subText}>채점 완료.</p>
-            </div>
-          </div>
-
-          <div style={styles.statsGrid}>
-            <div style={styles.statCard}>
-              <div style={styles.statLabel}>점수</div>
-              <div style={styles.statValue}>
-                {lastSubmissionResult.score}/{lastSubmissionResult.totalQuestions}
-              </div>
-            </div>
-            <div style={styles.statCard}>
-              <div style={styles.statLabel}>정답률</div>
-              <div style={styles.statValue}>{lastSubmissionResult.percentage}%</div>
-            </div>
-          </div>
-
-          {lastSubmissionResult.feedback && (
-  <div style={styles.card}>
-    <h2 style={styles.cardTitle}>선생님 피드백</h2>
-    <div style={styles.feedbackBox}>
-      {lastSubmissionResult.feedback}
-    </div>
-  </div>
-)}
-
-          <div style={styles.card}>
-            <h2 style={styles.cardTitle}>문제별 결과</h2>
-            <div style={styles.listStack}>
-              {lastSubmissionResult.resultDetails.map((result, index) => (
-                <div key={result.questionId} style={styles.solveCard}>
-                  <div style={styles.questionIndex}>문제 {index + 1}</div>
-                  <div style={styles.questionText}>{result.questionText}</div>
-                  <div style={styles.resultPillRow}>
-                    <span style={result.isCorrect ? styles.greenPill : styles.redPill}>
-                      {result.isCorrect ? "정답" : "오답"}
-                    </span>
-                    <span style={styles.grayPill}>내 답 {result.studentAnswer + 1}번</span>
-                    <span style={styles.grayPill}>정답 {result.correctAnswer + 1}번</span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-
-          <button
-            style={styles.primaryButton}
-            onClick={() => {
-              setLastSubmissionResult(null);
-              setMessage("");
-            }}
-          >
-            과제 목록으로 돌아가기
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentUserEmail && userRole === "student" && selectedAssignment) {
-    return (
-      <div style={styles.appShell}>
-        <div style={styles.studentWrap}>
-          <div style={styles.topBar}>
-            <div>
-              <div style={styles.badgeBlue}>과제 풀이</div>
-              <h1 style={styles.pageTitle}>{selectedAssignment.title}</h1>
-              <p style={styles.subText}>
-                PDF 참고: {selectedAssignment.pdfName || "없음"}
-              </p>
-            </div>
-            <button style={styles.ghostButton} onClick={() => setSelectedAssignment(null)}>
-              목록으로
-            </button>
-          </div>
-
-          {!!message && <div style={styles.notice}>{message}</div>}
-
-          <div style={styles.listStack}>
-            {(selectedAssignment.passages || []).map((passage, passageIndex) => {
-              const linkedQuestions = (selectedAssignment.questions || []).filter(
-                (q) => q.passageId === passage.id
-              );
-
-              return (
-                <div key={passage.id} style={styles.solvePassageWrap}>
-                  <div style={styles.passageBlock}>
-                    <div style={styles.questionIndex}>지문 {passageIndex + 1}</div>
-                    <div style={styles.assignmentTitle}>{passage.title}</div>
-                    <div style={styles.fullPassageText}>{passage.text}</div>
-                  </div>
-
-                  <div style={styles.listStack}>
-                    {linkedQuestions.map((q, qIndex) => (
-                      <div key={q.id} style={styles.solveCard}>
-                        <div style={styles.questionIndex}>
-                          문항 {qIndex + 1}
-                        </div>
-                        <div style={styles.questionText}>{q.questionText}</div>
-
-                        <div style={styles.choiceButtonWrap}>
-                          {q.choices.map((choice, choiceIndex) => {
-                            const selected = studentAnswers[q.id] === choiceIndex;
-                            return (
-                              <button
-                                key={choiceIndex}
-                                onClick={() => handleSelectAnswer(q.id, choiceIndex)}
-                                style={selected ? styles.choiceButtonActive : styles.choiceButton}
-                              >
-                                <span style={styles.choiceNumber}>{choiceIndex + 1}</span>
-                                <span>{choice}</span>
-                              </button>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          <div style={styles.bottomActionBar}>
-            <button style={styles.ghostButton} onClick={() => setSelectedAssignment(null)}>
-              목록으로 돌아가기
-            </button>
-            <button style={styles.primaryButton} onClick={handleSubmitAssignment}>
-              제출하기
-            </button>
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  if (currentUserEmail && userRole === "student") {
-    return (
-      <div style={styles.appShell}>
-        <div style={styles.studentWrap}>
-          <div style={styles.topBar}>
-            <div>
-              <div style={styles.badgeBlue}>학생 모드</div>
-              <h1 style={styles.pageTitle}>내 과제</h1>
-              <p style={styles.subText}>
-                {currentUserEmail} · 지문과 문항을 바로 풀이할 수 있어.
-              </p>
-            </div>
-            <button style={styles.ghostButton} onClick={handleLogout}>
-              로그아웃
-            </button>
-          </div>
-
-          {!!message && <div style={styles.notice}>{message}</div>}
-
-          {assignments.length === 0 ? (
-            <div style={styles.emptyBigCard}>
-              <h3 style={styles.cardTitle}>등록된 과제가 아직 없음</h3>
-              <p style={styles.cardDesc}>관리자가 PDF 기반 과제를 등록하면 여기서 바로 풀 수 있습니다.</p>
-            </div>
-          ) : (
-            <div style={styles.assignmentGrid}>
-              {assignments.map((item) => (
-                <div key={item.id} style={styles.assignmentStudentCard}>
-                  <div style={styles.assignmentCardTop}>
-                    <div style={styles.badgeLight}>{item.questions?.length || 0}문항</div>
-                  </div>
-                  <div style={styles.assignmentTitle}>{item.title}</div>
-                  <div style={styles.assignmentMeta}>
-                    PDF: {item.pdfName || "없음"}
-                  </div>
-                  <div style={styles.assignmentMeta}>
-                    지문 {item.passages?.length || 0}개 · 문제 {item.questions?.length || 0}개
-                  </div>
-
-                  <button
-                    onClick={() => {
-                      setSelectedAssignment(item);
-                      setStudentAnswers({});
-                      setMessage("");
-                      setLastSubmissionResult(null);
-                    }}
-                    style={{ ...styles.primaryButton, width: "100%", marginTop: 18 }}
-                  >
-                    과제 풀기
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    );
-  }
 
   return (
-    <div style={styles.loginPage}>
-      <div style={styles.loginCard}>
-        <div style={styles.loginBadge}>DELFI</div>
-        <h1 style={styles.loginTitle}>수강생 학습 플랫폼</h1>
-        <p style={styles.loginDesc}>
-          로그인하여 과제를 등록하거나 문제를 풀어보세요.
-        </p>
+    <span
+      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+        colorMap[status] ?? "bg-slate-100 text-slate-700"
+      }`}
+    >
+      {labelMap[status] ?? status}
+    </span>
+  );
+}
 
-        {!!message && <div style={styles.notice}>{message}</div>}
+function InfoCard(props: { title: string; value: string; sub?: string }) {
+  const { title, value, sub } = props;
+  return (
+    <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="text-sm font-medium text-slate-500">{title}</div>
+      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">{value}</div>
+      {sub ? <div className="mt-2 text-sm text-slate-500">{sub}</div> : null}
+    </div>
+  );
+}
 
-        <input
-          type="email"
-          placeholder="이메일"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          style={styles.input}
-        />
+function SectionCard(props: {
+  title: string;
+  description?: string;
+  action?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const { title, description, action, children } = props;
+  return (
+    <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
+      <div className="mb-5 flex items-start justify-between gap-4">
+        <div>
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h2>
+          {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
+        </div>
+        {action}
+      </div>
+      {children}
+    </section>
+  );
+}
 
-        <input
-          type="password"
-          placeholder="비밀번호"
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          style={styles.input}
-        />
+function PrimaryButton(props: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  type?: "button" | "submit";
+  className?: string;
+  disabled?: boolean;
+}) {
+  const { children, onClick, type = "button", className = "", disabled = false } = props;
+  return (
+    <button
+      type={type}
+      onClick={onClick}
+      disabled={disabled}
+      className={`inline-flex items-center justify-center gap-2 rounded-2xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white shadow-sm transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-violet-300 ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
 
-        <div style={styles.loginButtonWrap}>
-          <button onClick={handleSignup} style={styles.secondaryButton}>
-            회원가입
-          </button>
-          <button onClick={handleLogin} style={styles.primaryButton}>
+function SecondaryButton(props: {
+  children: React.ReactNode;
+  onClick?: () => void;
+  className?: string;
+}) {
+  const { children, onClick, className = "" } = props;
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={`inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 ${className}`}
+    >
+      {children}
+    </button>
+  );
+}
+
+function Sidebar(props: {
+  role: Role;
+  current: string;
+  onChange: (key: string) => void;
+}) {
+  const { role, current, onChange } = props;
+  const items = role === "admin" ? adminNav : studentNav;
+
+  return (
+    <aside className="sticky top-0 hidden h-screen w-72 shrink-0 border-r border-slate-200 bg-white p-5 lg:block">
+      <div className="flex h-full flex-col">
+        <div>
+          <div className="inline-flex rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
+            DELFI
+          </div>
+          <div className="mt-4 text-2xl font-semibold tracking-tight text-slate-900">
+            {role === "admin" ? "관리자 센터" : "학생 포털"}
+          </div>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            과제, 제출, 피드백을 한 곳에서 관리하는 학습 운영 웹
+          </p>
+        </div>
+
+        <nav className="mt-8 space-y-2">
+          {items.map((item) => {
+            const Icon = item.icon;
+            const active = current === item.key;
+
+            return (
+              <button
+                key={item.key}
+                onClick={() => onChange(item.key)}
+                className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-medium transition ${
+                  active
+                    ? "bg-violet-600 text-white shadow-sm"
+                    : "text-slate-700 hover:bg-slate-50"
+                }`}
+              >
+                <Icon className="h-4 w-4" />
+                {item.label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <div className="mt-auto rounded-3xl border border-slate-200 bg-slate-50 p-4">
+          <div className="text-sm font-semibold text-slate-900">운영 메모</div>
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            MVP 단계에서는 과제 배포 → PDF 제출 → 피드백 회신 흐름만 빠르게 검증합니다.
+          </p>
+        </div>
+      </div>
+    </aside>
+  );
+}
+
+function TopHeader(props: {
+  title: string;
+  description: string;
+  role: Role;
+  unreadCount: number;
+  userEmail: string;
+  onLogout: () => void;
+}) {
+  const { title, description, role, unreadCount, userEmail, onLogout } = props;
+
+  return (
+    <header className="mb-8 flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:flex-row md:items-center md:justify-between">
+      <div>
+        <div className="inline-flex rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
+          {role === "admin" ? "관리자 모드" : "학생 모드"}
+        </div>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">{title}</h1>
+        <p className="mt-2 text-sm text-slate-500">{description}</p>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-3">
+        <button className="relative rounded-2xl border border-slate-200 bg-white p-3 text-slate-600 hover:bg-slate-50">
+          <Bell className="h-4 w-4" />
+          {unreadCount > 0 ? (
+            <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-rose-500" />
+          ) : null}
+        </button>
+
+        <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
+          {userEmail}
+        </div>
+
+        <SecondaryButton onClick={onLogout}>
+          <LogOut className="h-4 w-4" />
+          로그아웃
+        </SecondaryButton>
+      </div>
+    </header>
+  );
+}
+
+function LoginScreen(props: {
+  email: string;
+  password: string;
+  loading: boolean;
+  error: string;
+  onEmailChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  onLogin: (e: React.FormEvent<HTMLFormElement>) => void;
+}) {
+  const {
+    email,
+    password,
+    loading,
+    error,
+    onEmailChange,
+    onPasswordChange,
+    onLogin,
+  } = props;
+
+  return (
+    <div className="min-h-screen bg-[#F8F7FB] px-4 py-8 md:px-6 md:py-10">
+      <div className="mx-auto grid min-h-[88vh] max-w-6xl items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+        <div className="hidden lg:flex flex-col justify-center">
+          <div className="inline-flex w-fit rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
+            DELFI
+          </div>
+
+          <h1 className="mt-6 text-5xl font-semibold leading-[1.15] tracking-tight text-slate-900 xl:text-6xl">
+            <span className="text-slate-500">매일의 반복이,</span>
+            <br />
+            <span className="text-slate-900">내일을 만듭니다.</span>
+          </h1>
+
+          <p className="mt-6 text-base leading-7 text-slate-500">매일 받는 피드백, DELFI</p>
+
+          <div className="mt-10 grid max-w-xl gap-4">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-slate-900">과제 배포</div>
+              <div className="mt-1 text-sm text-slate-500">
+                매일 과제를 빠르게 업로드하고 학생별로 배정합니다.
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-slate-900">제출 관리</div>
+              <div className="mt-1 text-sm text-slate-500">
+                제출 여부와 제출 파일을 한 곳에서 확인합니다.
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+              <div className="text-sm font-semibold text-slate-900">피드백 기록</div>
+              <div className="mt-1 text-sm text-slate-500">
+                누적되는 피드백으로 학생의 성장을 관리합니다.
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm md:p-10">
+          <div className="inline-flex rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
             로그인
-          </button>
+          </div>
+
+          <h2 className="mt-4 text-2xl font-semibold tracking-tight text-slate-900">
+            DELFI 시작하기
+          </h2>
+
+          <p className="mt-2 text-sm leading-6 text-slate-500">
+            계정으로 로그인하여 과제와 피드백을 확인하세요.
+          </p>
+
+          <form onSubmit={onLogin} className="mt-8 space-y-4">
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">이메일</label>
+              <input
+                type="email"
+                value={email}
+                onChange={(e) => onEmailChange(e.target.value)}
+                placeholder="이메일을 입력하세요"
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
+              />
+            </div>
+
+            <div>
+              <label className="mb-2 block text-sm font-medium text-slate-700">비밀번호</label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => onPasswordChange(e.target.value)}
+                placeholder="비밀번호를 입력하세요"
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
+              />
+            </div>
+
+            {error ? (
+              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                {error}
+              </div>
+            ) : null}
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="inline-flex w-full items-center justify-center rounded-2xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-violet-300"
+            >
+              {loading ? "로그인 중..." : "로그인"}
+            </button>
+          </form>
+
+          <div className="mt-6 text-center text-xs text-slate-400">
+            매일의 반복과 피드백이 결과를 만듭니다.
+          </div>
         </div>
       </div>
     </div>
   );
 }
 
-function formatDate(value?: string) {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return `${date.getFullYear()}.${String(date.getMonth() + 1).padStart(2, "0")}.${String(
-    date.getDate()
-  ).padStart(2, "0")} ${String(date.getHours()).padStart(2, "0")}:${String(
-    date.getMinutes()
-  ).padStart(2, "0")}`;
+function AdminDashboard() {
+  return (
+    <div className="space-y-6">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <InfoCard title="등록 과제" value="12" sub="이번 주 기준" />
+        <InfoCard title="오늘 제출" value="7" sub="최근 24시간" />
+        <InfoCard title="미제출" value="5" sub="현재 마감 전/후 포함" />
+        <InfoCard title="피드백 대기" value="3" sub="바로 처리 필요" />
+      </div>
+
+      <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
+        <SectionCard title="최근 제출" description="가장 최근 도착한 학생 제출물">
+          <div className="space-y-3">
+            {mockSubmissions.map((item) => (
+              <div
+                key={item.id}
+                className="flex flex-col gap-3 rounded-2xl border border-slate-100 p-4 md:flex-row md:items-center md:justify-between"
+              >
+                <div>
+                  <div className="font-semibold text-slate-900">{item.assignmentTitle}</div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    {item.studentName} · {item.studentEmail}
+                  </div>
+                </div>
+                <div className="flex items-center gap-3">
+                  <div className="text-sm text-slate-500">{item.submittedAt}</div>
+                  <StatusBadge status={item.status} />
+                </div>
+              </div>
+            ))}
+          </div>
+        </SectionCard>
+
+        <SectionCard title="빠른 작업" description="자주 쓰는 기능 바로 이동">
+          <div className="grid gap-3">
+            <button className="rounded-2xl border border-slate-200 p-4 text-left transition hover:bg-slate-50">
+              <div className="font-semibold text-slate-900">새 과제 등록</div>
+              <div className="mt-1 text-sm text-slate-500">
+                PDF 업로드 후 학생에게 배정합니다.
+              </div>
+            </button>
+            <button className="rounded-2xl border border-slate-200 p-4 text-left transition hover:bg-slate-50">
+              <div className="font-semibold text-slate-900">피드백 대기 확인</div>
+              <div className="mt-1 text-sm text-slate-500">
+                미처리 제출물부터 바로 확인합니다.
+              </div>
+            </button>
+            <button className="rounded-2xl border border-slate-200 p-4 text-left transition hover:bg-slate-50">
+              <div className="font-semibold text-slate-900">학생별 현황 보기</div>
+              <div className="mt-1 text-sm text-slate-500">
+                학생별 과제·제출·피드백 이력을 봅니다.
+              </div>
+            </button>
+          </div>
+        </SectionCard>
+      </div>
+    </div>
+  );
 }
 
-const styles: Record<string, React.CSSProperties> = {
-  appShell: {
-    minHeight: "100vh",
-    background: "#f7f4ff",
-    padding: "32px 20px",
-    fontFamily:
-      "'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif",
-    color: "#0f172a",
-  },
-  dashboardWrap: {
-    maxWidth: 1280,
-    margin: "0 auto",
-  },
-  studentWrap: {
-    maxWidth: 1080,
-    margin: "0 auto",
-  },
-  topBar: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 16,
-    marginBottom: 24,
-    flexWrap: "wrap",
-  },
-  pageTitle: {
-    margin: "8px 0 6px",
-    fontSize: 34,
-    fontWeight: 800,
-    letterSpacing: "-0.03em",
-  },
-  subText: {
-    margin: 0,
-    color: "#64748b",
-    fontSize: 15,
-  },
- badgeBlue: {
-  display: "inline-flex",
-  alignItems: "center",
-  padding: "6px 12px",
-  borderRadius: 999,
-  background: "#efe7ff",
-  color: "#6d28d9",
-  fontWeight: 700,
-  fontSize: 13,
-},
-  badgeLight: {
-  display: "inline-flex",
-  alignItems: "center",
-  padding: "6px 10px",
-  borderRadius: 999,
-  background: "#f3e8ff",
-  color: "#7c3aed",
-  fontWeight: 700,
-  fontSize: 12,
-},
-  scoreBadge: {
-    minWidth: 72,
-    textAlign: "center",
-    padding: "10px 14px",
-    borderRadius: 14,
-    background: "#dbeafe",
-    color: "#1d4ed8",
-    fontWeight: 800,
-    fontSize: 22,
-  },
-  notice: {
-  marginBottom: 20,
-  background: "#f5f3ff",
-  color: "#6d28d9",
-  border: "1px solid #ddd6fe",
-  padding: "14px 16px",
-  borderRadius: 16,
-  fontWeight: 600,
-},
-  statsGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-    gap: 16,
-    marginBottom: 24,
-  },
-  statCard: {
-    background: "#ffffff",
-    borderRadius: 24,
-    padding: 22,
-    boxShadow: "0 8px 30px rgba(15, 23, 42, 0.06)",
-    border: "1px solid #e2e8f0",
-  },
-  statLabel: {
-    color: "#64748b",
-    fontSize: 14,
-    marginBottom: 10,
-    fontWeight: 600,
-  },
-  statValue: {
-    fontSize: 30,
-    fontWeight: 800,
-    letterSpacing: "-0.03em",
-  },
-  twoCol: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(380px, 1fr))",
-    gap: 18,
-    marginBottom: 18,
-  },
-  card: {
-    background: "#ffffff",
-    borderRadius: 28,
-    padding: 24,
-    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.06)",
-    border: "1px solid #e2e8f0",
-  },
-  cardTitle: {
-    margin: 0,
-    fontSize: 24,
-    fontWeight: 800,
-    letterSpacing: "-0.02em",
-  },
-  cardDesc: {
-    marginTop: 8,
-    marginBottom: 20,
-    color: "#64748b",
-    fontSize: 14,
-  },
-  sectionTitle: {
-    margin: "0 0 12px",
-    fontSize: 18,
-    fontWeight: 700,
-  },
-  input: {
-    width: "100%",
-    padding: "14px 16px",
-    borderRadius: 14,
-    border: "1px solid #dbe2ea",
-    outline: "none",
-    fontSize: 15,
-    background: "#fff",
-    boxSizing: "border-box",
-    marginBottom: 12,
-  },
-  textarea: {
-    width: "100%",
-    minHeight: 110,
-    padding: "14px 16px",
-    borderRadius: 14,
-    border: "1px solid #dbe2ea",
-    outline: "none",
-    fontSize: 15,
-    resize: "vertical",
-    background: "#fff",
-    boxSizing: "border-box",
-    marginBottom: 14,
-  },
-  largeTextarea: {
-    width: "100%",
-    minHeight: 180,
-    padding: "14px 16px",
-    borderRadius: 14,
-    border: "1px solid #dbe2ea",
-    outline: "none",
-    fontSize: 15,
-    resize: "vertical",
-    background: "#fff",
-    boxSizing: "border-box",
-    marginBottom: 14,
-    lineHeight: 1.6,
-  },
-  choiceGrid: {
-    display: "grid",
-    gridTemplateColumns: "1fr",
-    gap: 0,
-  },
-  select: {
-    padding: "12px 14px",
-    borderRadius: 12,
-    border: "1px solid #dbe2ea",
-    fontSize: 15,
-    background: "#fff",
-  },
-  selectWide: {
-    width: "100%",
-    padding: "12px 14px",
-    borderRadius: 12,
-    border: "1px solid #dbe2ea",
-    fontSize: 15,
-    background: "#fff",
-  },
-  rowBetween: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 16,
-    flexWrap: "wrap",
-    marginTop: 10,
-  },
-  inlineField: {
-    display: "flex",
-    alignItems: "center",
-    gap: 10,
-  },
-  inlineFieldColumn: {
-    display: "flex",
-    flexDirection: "column",
-    gap: 8,
-    marginBottom: 14,
-  },
-  inlineLabel: {
-    fontWeight: 700,
-    color: "#334155",
-  },
-  primaryButton: {
-  border: "none",
-  background: "linear-gradient(135deg, #7c3aed, #a855f7)",
-  color: "#fff",
-  fontWeight: 700,
-  padding: "14px 18px",
-  borderRadius: 14,
-  cursor: "pointer",
-  fontSize: 15,
-  boxShadow: "0 10px 20px rgba(124, 58, 237, 0.18)",
-},
-  secondaryButton: {
-    border: "1px solid #cbd5e1",
-    background: "#fff",
-    color: "#0f172a",
-    fontWeight: 700,
-    padding: "14px 18px",
-    borderRadius: 14,
-    cursor: "pointer",
-    fontSize: 15,
-  },
-  ghostButton: {
-    border: "1px solid #dbe2ea",
-    background: "#ffffff",
-    color: "#0f172a",
-    fontWeight: 700,
-    padding: "12px 16px",
-    borderRadius: 14,
-    cursor: "pointer",
-    fontSize: 14,
-  },
-  divider: {
-    height: 1,
-    background: "#e2e8f0",
-    margin: "18px 0",
-  },
-  emptyBox: {
-    background: "#f8fafc",
-    border: "1px dashed #cbd5e1",
-    borderRadius: 18,
-    padding: 20,
-    color: "#64748b",
-  },
-  emptyBigCard: {
-    background: "#ffffff",
-    borderRadius: 28,
-    padding: 32,
-    textAlign: "center",
-    border: "1px solid #e2e8f0",
-    boxShadow: "0 10px 30px rgba(15, 23, 42, 0.05)",
-  },
-  listStack: {
-    display: "grid",
-    gap: 14,
-  },
-  questionPreviewCard: {
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    borderRadius: 18,
-    padding: 18,
-  },
-  passagePreviewCard: {
-    background: "#f8fafc",
-    border: "1px solid #e2e8f0",
-    borderRadius: 18,
-    padding: 18,
-  },
-  questionIndex: {
-    display: "inline-block",
-    marginBottom: 12,
-    background: "#e0f2fe",
-    color: "#0369a1",
-    fontSize: 12,
-    fontWeight: 800,
-    padding: "6px 10px",
-    borderRadius: 999,
-  },
-  questionText: {
-    fontSize: 17,
-    fontWeight: 700,
-    lineHeight: 1.5,
-    marginBottom: 14,
-  },
-  passageTextPreview: {
-    whiteSpace: "pre-wrap",
-    lineHeight: 1.7,
-    color: "#334155",
-    maxHeight: 180,
-    overflow: "auto",
-  },
-  fullPassageText: {
-    whiteSpace: "pre-wrap",
-    lineHeight: 1.9,
-    color: "#1e293b",
-    fontSize: 15,
-  },
-  choiceList: {
-    display: "grid",
-    gap: 8,
-    marginBottom: 12,
-  },
-  choiceItem: {
-    padding: "10px 12px",
-    background: "#fff",
-    border: "1px solid #e2e8f0",
-    borderRadius: 12,
-    color: "#334155",
-  },
-  answerChip: {
-    answerChip: {
-  display: "inline-flex",
-  padding: "6px 10px",
-  borderRadius: 999,
-  background: "#ede9fe",
-  color: "#6d28d9",
-  fontWeight: 700,
-  fontSize: 12,
-},
-  assignmentCard: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "center",
-    gap: 16,
-    border: "1px solid #e2e8f0",
-    borderRadius: 18,
-    padding: 18,
-    background: "#fff",
-  },
-  assignmentCardTop: {
-    display: "flex",
-    justifyContent: "space-between",
-    marginBottom: 14,
-  },
-  assignmentTitle: {
-    fontSize: 18,
-    fontWeight: 800,
-    letterSpacing: "-0.02em",
-    marginBottom: 6,
-  },
-  assignmentMeta: {
-    color: "#64748b",
-    fontSize: 13,
-  },
-  resultCard: {
-    border: "1px solid #e2e8f0",
-    borderRadius: 18,
-    padding: 18,
-    background: "#fff",
-  },
-  resultHeader: {
-    display: "flex",
-    justifyContent: "space-between",
-    alignItems: "flex-start",
-    gap: 12,
-  },
-  resultMetaRow: {
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    color: "#64748b",
-    fontSize: 13,
-    marginTop: 10,
-    flexWrap: "wrap",
-  },
-  solveCard: {
-    background: "#ffffff",
-    border: "1px solid #e2e8f0",
-    borderRadius: 24,
-    padding: 24,
-    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
-  },
-  solvePassageWrap: {
-    display: "grid",
-    gap: 18,
-  },
-  passageBlock: {
-    background: "#ffffff",
-    border: "1px solid #dbeafe",
-    borderRadius: 24,
-    padding: 24,
-    boxShadow: "0 8px 24px rgba(37, 99, 235, 0.05)",
-  },
-  choiceButtonWrap: {
-    display: "grid",
-    gap: 12,
-  },
-  choiceButton: {
-    display: "flex",
-    alignItems: "center",
-    gap: 12,
-    width: "100%",
-    padding: "14px 16px",
-    borderRadius: 16,
-    border: "1px solid #dbe2ea",
-    background: "#fff",
-    cursor: "pointer",
-    textAlign: "left",
-    fontSize: 15,
-    color: "#0f172a",
-  },
-  choiceButtonActive: {
-  display: "flex",
-  alignItems: "center",
-  gap: 12,
-  width: "100%",
-  padding: "14px 16px",
-  borderRadius: 16,
-  border: "1px solid #c4b5fd",
-  background: "#f5f3ff",
-  cursor: "pointer",
-  textAlign: "left",
-  fontSize: 15,
-  color: "#6d28d9",
-  boxShadow: "0 8px 20px rgba(168, 85, 247, 0.12)",
-},
-  choiceNumber: {
-    width: 28,
-    height: 28,
-    borderRadius: "50%",
-    background: "#e2e8f0",
-    display: "inline-flex",
-    justifyContent: "center",
-    alignItems: "center",
-    fontWeight: 800,
-    fontSize: 13,
-    flexShrink: 0,
-  },
-  bottomActionBar: {
-    marginTop: 24,
-    display: "flex",
-    justifyContent: "space-between",
-    gap: 12,
-    flexWrap: "wrap",
-  },
-  resultPillRow: {
-    display: "flex",
-    gap: 8,
-    flexWrap: "wrap",
-  },
-  greenPill: {
-    display: "inline-flex",
-    padding: "8px 12px",
-    borderRadius: 999,
-    background: "#dcfce7",
-    color: "#15803d",
-    fontWeight: 700,
-    fontSize: 13,
-  },
-  redPill: {
-    display: "inline-flex",
-    padding: "8px 12px",
-    borderRadius: 999,
-    background: "#fee2e2",
-    color: "#dc2626",
-    fontWeight: 700,
-    fontSize: 13,
-  },
-  grayPill: {
-    display: "inline-flex",
-    padding: "8px 12px",
-    borderRadius: 999,
-    background: "#f1f5f9",
-    color: "#334155",
-    fontWeight: 700,
-    fontSize: 13,
-  },
-  loginPage: {
-  minHeight: "100vh",
-  display: "flex",
-  justifyContent: "center",
-  alignItems: "center",
-  background:
-    "linear-gradient(180deg, #f5f3ff 0%, #faf5ff 45%, #f7f4ff 100%)",
-  padding: 20,
-  fontFamily:
-    "'Pretendard', 'Apple SD Gothic Neo', 'Noto Sans KR', sans-serif",
-},
-  loginCard: {
-    width: "100%",
-    maxWidth: 460,
-    background: "#ffffff",
-    padding: 32,
-    borderRadius: 30,
-    boxShadow: "0 24px 50px rgba(15, 23, 42, 0.08)",
-    border: "1px solid #e2e8f0",
-  },
-  loginBadge: {
-    display: "inline-flex",
-    padding: "8px 12px",
-    borderRadius: 999,
-    background: "#dbeafe",
-    color: "#1d4ed8",
-    fontWeight: 800,
-    marginBottom: 16,
-  },
-  loginTitle: {
-    margin: 0,
-    fontSize: 32,
-    fontWeight: 800,
-    letterSpacing: "-0.03em",
-  },
-  loginDesc: {
-    marginTop: 10,
-    marginBottom: 24,
-    color: "#64748b",
-    lineHeight: 1.6,
-  },
-  loginButtonWrap: {
-    display: "flex",
-    gap: 10,
-    flexWrap: "wrap",
-    marginTop: 8,
-  },
-  centerCard: {
-    maxWidth: 420,
-    margin: "120px auto",
-    background: "#fff",
-    borderRadius: 26,
-    padding: 30,
-    textAlign: "center",
-    border: "1px solid #e2e8f0",
-    boxShadow: "0 18px 40px rgba(15, 23, 42, 0.06)",
-  },
-  centerTitle: {
-    margin: 0,
-    fontSize: 26,
-    fontWeight: 800,
-  },
-  muted: {
-    color: "#64748b",
-    marginTop: 10,
-  },
-  assignmentGrid: {
-    display: "grid",
-    gridTemplateColumns: "repeat(auto-fit, minmax(260px, 1fr))",
-    gap: 16,
-  },
-  assignmentStudentCard: {
-    background: "#ffffff",
-    borderRadius: 24,
-    padding: 20,
-    border: "1px solid #e2e8f0",
-    boxShadow: "0 8px 24px rgba(15, 23, 42, 0.05)",
-  },
-  padding: 16,
-    borderRadius: 16,
-    background: "#faf5ff",
-    border: "1px solid #e9d5ff",
-  },
-  pdfLabel: {
-    fontSize: 14,
-    fontWeight: 700,
-    marginBottom: 8,
-  },
-  pdfFileName: {
-    marginTop: 10,
-    color: "#475569",
-    fontSize: 14,
-  },
-  previewSection: {
-    marginBottom: 20,
-  }
-};
+function AdminAssignments() {
+  return (
+    <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
+      <SectionCard
+        title="새 과제 등록"
+        description="PDF를 업로드하고 학생을 이름/학년 기준으로 배정하세요."
+        action={
+          <PrimaryButton>
+            <Plus className="h-4 w-4" /> 저장
+          </PrimaryButton>
+        }
+      >
+        <div className="grid gap-4">
+          <input
+            className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
+            placeholder="과제 제목"
+          />
 
-export default App;
+          <textarea
+            className="min-h-28 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
+            placeholder="과제 설명"
+          />
+
+          <div className="grid gap-4 md:grid-cols-2">
+            <select className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-violet-400">
+              <option>학생 선택</option>
+              {mockStudents.map((student) => (
+                <option key={student.id}>
+                  {student.name} / {student.grade}
+                </option>
+              ))}
+            </select>
+
+            <input
+              className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
+              placeholder="배정 학생 이메일"
+              value={mockStudents[0]?.email ?? ""}
+              readOnly
+            />
+          </div>
+
+          <input
+            type="date"
+            className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
+          />
+
+          <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm text-violet-700">
+            <span className="font-medium">과제 PDF 업로드</span>
+            <Upload className="h-4 w-4" />
+          </label>
+        </div>
+      </SectionCard>
+
+      <SectionCard title="등록된 과제" description="최근 등록된 과제와 배정 학생 정보를 확인합니다.">
+        <div className="space-y-3">
+          {mockAssignments.map((item) => (
+            <div key={item.id} className="rounded-2xl border border-slate-100 p-4">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <div className="font-semibold text-slate-900">{item.title}</div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    {item.assignedStudentName} · {item.assignedStudentGrade} · {item.assignedTo}
+                  </div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    {item.pdfName} · 마감 {item.dueDate}
+                  </div>
+                </div>
+                <StatusBadge status={item.status} />
+              </div>
+            </div>
+          ))}
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function AdminSubmissions() {
+  return (
+    <SectionCard title="제출 관리" description="학생 제출물과 제출 상태를 확인합니다.">
+      <div className="mb-5 grid gap-3 md:grid-cols-4">
+        <div className="rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-500">
+          과제 필터
+        </div>
+        <div className="rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-500">
+          학생 필터
+        </div>
+        <div className="rounded-2xl border border-slate-200 px-4 py-3 text-sm text-slate-500">
+          상태 필터
+        </div>
+        <button className="inline-flex items-center justify-center gap-2 rounded-2xl border border-slate-200 px-4 py-3 text-sm font-medium text-slate-700 hover:bg-slate-50">
+          <Search className="h-4 w-4" /> 검색
+        </button>
+      </div>
+
+      <div className="space-y-3">
+        {mockSubmissions.map((item) => (
+          <div
+            key={item.id}
+            className="grid gap-4 rounded-2xl border border-slate-100 p-4 lg:grid-cols-[1.2fr_0.7fr_0.6fr] lg:items-center"
+          >
+            <div>
+              <div className="font-semibold text-slate-900">{item.assignmentTitle}</div>
+              <div className="mt-1 text-sm text-slate-500">
+                {item.studentName} · {item.studentEmail}
+              </div>
+            </div>
+            <div className="text-sm text-slate-500">제출 시각 {item.submittedAt}</div>
+            <div className="flex items-center gap-2 justify-start lg:justify-end">
+              <StatusBadge status={item.status} />
+              <SecondaryButton>
+                <Download className="h-4 w-4" /> 제출 PDF
+              </SecondaryButton>
+            </div>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function AdminFeedback() {
+  return (
+    <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
+      <SectionCard title="피드백 대기" description="먼저 처리할 제출물부터 확인하세요.">
+        <div className="space-y-3">
+          {mockFeedback.map((item) => (
+            <button
+              key={item.id}
+              className="w-full rounded-2xl border border-slate-100 p-4 text-left transition hover:bg-slate-50"
+            >
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-slate-900">{item.assignmentTitle}</div>
+                  <div className="mt-1 text-sm text-slate-500">
+                    {item.studentName} · {item.createdAt}
+                  </div>
+                </div>
+                <StatusBadge status={item.status} />
+              </div>
+            </button>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title="피드백 작성"
+        description="텍스트 피드백 또는 피드백 PDF를 회신합니다."
+      >
+        <div className="grid gap-4">
+          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
+            선택된 제출물 정보가 이 영역에 표시됩니다.
+          </div>
+
+          <textarea
+            className="min-h-52 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
+            placeholder="학생에게 전달할 피드백을 작성하세요."
+          />
+
+          <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm text-violet-700">
+            <span className="font-medium">피드백 PDF 업로드</span>
+            <Upload className="h-4 w-4" />
+          </label>
+
+          <div className="flex flex-wrap gap-3">
+            <PrimaryButton>피드백 저장</PrimaryButton>
+            <SecondaryButton>피드백 완료 처리</SecondaryButton>
+          </div>
+        </div>
+      </SectionCard>
+    </div>
+  );
+}
+
+function AdminStudents() {
+  return (
+    <SectionCard title="학생 관리" description="학생별 이름, 학년, 연락처와 진행 현황을 확인합니다.">
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+        {mockStudents.map((student) => (
+          <div key={student.id} className="rounded-3xl border border-slate-200 bg-white p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold text-slate-900">{student.name}</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  {student.grade} · {student.email}
+                </div>
+              </div>
+              <StatusBadge status={student.status} />
+            </div>
+
+            <div className="mt-4 space-y-2 text-sm text-slate-500">
+              <div>학교: {student.school || "-"}</div>
+              <div>연락처: {student.phone || "-"}</div>
+            </div>
+
+            <div className="mt-5 grid grid-cols-3 gap-3 text-center">
+              <div className="rounded-2xl bg-slate-50 p-3">
+                <div className="text-lg font-semibold text-slate-900">
+                  {student.activeAssignments}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">진행 과제</div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-3">
+                <div className="text-lg font-semibold text-slate-900">
+                  {student.submittedCount}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">제출 수</div>
+              </div>
+              <div className="rounded-2xl bg-slate-50 p-3">
+                <div className="text-lg font-semibold text-slate-900">
+                  {student.feedbackDoneCount}
+                </div>
+                <div className="mt-1 text-xs text-slate-500">피드백</div>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function StudentAssignments() {
+  return (
+    <SectionCard title="내 과제" description="배정된 과제를 다운로드하고 제출할 수 있습니다.">
+      <div className="grid gap-4 lg:grid-cols-2">
+        {mockAssignments.map((item) => (
+          <div key={item.id} className="rounded-3xl border border-slate-200 bg-white p-5">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <div className="font-semibold text-slate-900">{item.title}</div>
+                <div className="mt-1 text-sm text-slate-500">
+                  담당 학생: {item.assignedStudentName} · {item.assignedStudentGrade}
+                </div>
+                <div className="mt-1 text-sm text-slate-500">
+                  마감 {item.dueDate} · {item.pdfName}
+                </div>
+              </div>
+              <StatusBadge status={item.status} />
+            </div>
+
+            <div className="mt-5 flex flex-wrap gap-3">
+              <SecondaryButton>
+                <Download className="h-4 w-4" /> 과제 PDF
+              </SecondaryButton>
+              <PrimaryButton>
+                <Upload className="h-4 w-4" /> 제출하기
+              </PrimaryButton>
+            </div>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function StudentSubmissions() {
+  return (
+    <SectionCard title="제출 내역" description="내가 제출한 파일과 제출 시간을 확인합니다.">
+      <div className="space-y-3">
+        {mockSubmissions.map((item) => (
+          <div
+            key={item.id}
+            className="flex flex-col gap-3 rounded-2xl border border-slate-100 p-4 md:flex-row md:items-center md:justify-between"
+          >
+            <div>
+              <div className="font-semibold text-slate-900">{item.assignmentTitle}</div>
+              <div className="mt-1 text-sm text-slate-500">제출 시각 {item.submittedAt}</div>
+            </div>
+
+            <div className="flex items-center gap-3">
+              <StatusBadge status={item.status} />
+              <SecondaryButton>
+                <Download className="h-4 w-4" /> 제출 파일
+              </SecondaryButton>
+            </div>
+          </div>
+        ))}
+      </div>
+    </SectionCard>
+  );
+}
+
+function StudentFeedback(props: {
+  items: FeedbackItem[];
+  selectedId: string | null;
+  onSelect: (id: string) => void;
+}) {
+  const { items, selectedId, onSelect } = props;
+  const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null;
+
+  return (
+    <div className="grid gap-6 xl:grid-cols-[0.8fr_1.2fr]">
+      <SectionCard title="피드백 목록" description="새 피드백은 NEW 뱃지로 표시됩니다.">
+        <div className="space-y-3">
+          {items.map((item) => (
+            <button
+              key={item.id}
+              onClick={() => onSelect(item.id)}
+              className={`w-full rounded-2xl border p-4 text-left transition ${
+                selected?.id === item.id
+                  ? "border-violet-300 bg-violet-50/50"
+                  : "border-slate-100 hover:bg-slate-50"
+              }`}
+            >
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <div className="font-semibold text-slate-900">{item.assignmentTitle}</div>
+                  <div className="mt-1 text-sm text-slate-500">도착일 {item.createdAt}</div>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  {!item.isRead ? (
+                    <span className="inline-flex rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-600">
+                      NEW
+                    </span>
+                  ) : null}
+                  <StatusBadge status={item.status} />
+                </div>
+              </div>
+            </button>
+          ))}
+        </div>
+      </SectionCard>
+
+      <SectionCard title="피드백 상세" description="과제별 코치 피드백을 확인합니다.">
+        {selected ? (
+          <div className="space-y-4">
+            <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4">
+              <div className="text-sm text-slate-500">과제명</div>
+              <div className="mt-2 text-lg font-semibold text-slate-900">
+                {selected.assignmentTitle}
+              </div>
+            </div>
+
+            <div className="rounded-2xl border border-slate-200 bg-white p-5">
+              <div className="text-sm font-medium text-slate-500">코치 피드백</div>
+              <div className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-slate-700">
+                {selected.summary || "등록된 피드백이 없습니다."}
+              </div>
+            </div>
+
+            <div className="flex flex-wrap gap-3">
+              <SecondaryButton>
+                <Download className="h-4 w-4" /> 피드백 PDF
+              </SecondaryButton>
+              <SecondaryButton>
+                <Download className="h-4 w-4" /> 제출 PDF
+              </SecondaryButton>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-sm text-slate-500">
+            아직 확인할 피드백이 없습니다.
+          </div>
+        )}
+      </SectionCard>
+    </div>
+  );
+}
+
+function StudentProfile(props: { email: string }) {
+  const { email } = props;
+
+  return (
+    <SectionCard title="내 정보" description="기본 계정 정보를 확인합니다.">
+      <div className="grid gap-4 md:grid-cols-2">
+        <div className="rounded-2xl border border-slate-200 p-4">
+          <div className="text-sm text-slate-500">역할</div>
+          <div className="mt-2 font-semibold text-slate-900">학생</div>
+        </div>
+
+        <div className="rounded-2xl border border-slate-200 p-4">
+          <div className="text-sm text-slate-500">이메일</div>
+          <div className="mt-2 font-semibold text-slate-900">{email}</div>
+        </div>
+      </div>
+    </SectionCard>
+  );
+}
+
+function LoadingScreen(props: { label: string }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-[#F8F7FB] px-4">
+      <div className="rounded-3xl border border-slate-200 bg-white px-8 py-10 text-center shadow-sm">
+        <Loader2 className="mx-auto h-7 w-7 animate-spin text-violet-600" />
+        <div className="mt-4 text-sm font-medium text-slate-700">{props.label}</div>
+      </div>
+    </div>
+  );
+}
+
+export default function App() {
+  const [authLoading, setAuthLoading] = useState(true);
+  const [loginLoading, setLoginLoading] = useState(false);
+  const [loginEmail, setLoginEmail] = useState("");
+  const [loginPassword, setLoginPassword] = useState("");
+  const [loginError, setLoginError] = useState("");
+
+  const [currentUserEmail, setCurrentUserEmail] = useState("");
+  const [role, setRole] = useState<Role | null>(null);
+  const [currentPage, setCurrentPage] = useState("dashboard");
+
+  const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>(mockFeedback);
+  const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(
+    mockFeedback[0]?.id ?? null
+  );
+
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (user) => {
+      setAuthLoading(true);
+      setLoginError("");
+
+      try {
+        if (!user) {
+          setCurrentUserEmail("");
+          setRole(null);
+          setCurrentPage("dashboard");
+          setAuthLoading(false);
+          return;
+        }
+
+        const email = user.email || "";
+        setCurrentUserEmail(email);
+
+        const userRef = doc(db, "users", user.uid);
+        const userSnap = await getDoc(userRef);
+
+        const nextRole: Role =
+          userSnap.exists() && userSnap.data()?.role === "admin" ? "admin" : "student";
+
+        setRole(nextRole);
+        setCurrentPage(nextRole === "admin" ? "dashboard" : "assignments");
+      } catch (error: any) {
+        setLoginError(error?.message || "인증 정보를 불러오지 못했습니다.");
+      } finally {
+        setAuthLoading(false);
+      }
+    });
+
+    return () => unsubscribe();
+  }, []);
+
+  const unreadCount = feedbackItems.filter((item) => !item.isRead).length;
+
+  const pageMeta = useMemo(() => {
+    if (role === "admin") {
+      const map: Record<string, { title: string; description: string }> = {
+        dashboard: {
+          title: "대시보드",
+          description: "오늘의 운영 현황과 빠른 작업을 확인합니다.",
+        },
+        assignments: {
+          title: "과제 관리",
+          description: "과제 PDF를 등록하고 학생에게 배정합니다.",
+        },
+        submissions: {
+          title: "제출 관리",
+          description: "학생 제출물과 제출 상태를 확인합니다.",
+        },
+        feedback: {
+          title: "피드백 관리",
+          description: "제출물에 대한 피드백을 작성하고 회신합니다.",
+        },
+        students: {
+          title: "학생 관리",
+          description: "학생별 과제·제출·피드백 이력을 봅니다.",
+        },
+      };
+
+      return map[currentPage] ?? map.dashboard;
+    }
+
+    const map: Record<string, { title: string; description: string }> = {
+      assignments: {
+        title: "내 과제",
+        description: "배정된 과제를 확인하고 제출합니다.",
+      },
+      submissions: {
+        title: "제출 내역",
+        description: "내가 제출한 과제를 다시 확인합니다.",
+      },
+      feedback: {
+        title: "피드백",
+        description: "도착한 피드백을 과제별로 확인합니다.",
+      },
+      profile: {
+        title: "내 정보",
+        description: "계정 정보를 확인하고 관리합니다.",
+      },
+    };
+
+    return map[currentPage] ?? map.assignments;
+  }, [role, currentPage]);
+
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
+    e.preventDefault();
+    setLoginError("");
+
+    if (!loginEmail.trim() || !loginPassword.trim()) {
+      setLoginError("이메일과 비밀번호를 모두 입력하세요.");
+      return;
+    }
+
+    try {
+      setLoginLoading(true);
+      await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
+      setLoginPassword("");
+    } catch (error: any) {
+      setLoginError(error?.message || "로그인에 실패했습니다.");
+    } finally {
+      setLoginLoading(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await signOut(auth);
+      setLoginEmail("");
+      setLoginPassword("");
+      setFeedbackItems(mockFeedback);
+      setSelectedFeedbackId(mockFeedback[0]?.id ?? null);
+    } catch (error: any) {
+      setLoginError(error?.message || "로그아웃에 실패했습니다.");
+    }
+  };
+
+  const renderAdminPage = () => {
+    switch (currentPage) {
+      case "assignments":
+        return <AdminAssignments />;
+      case "submissions":
+        return <AdminSubmissions />;
+      case "feedback":
+        return <AdminFeedback />;
+      case "students":
+        return <AdminStudents />;
+      default:
+        return <AdminDashboard />;
+    }
+  };
+
+  const renderStudentPage = () => {
+    switch (currentPage) {
+      case "submissions":
+        return <StudentSubmissions />;
+      case "feedback":
+        return (
+          <StudentFeedback
+            items={feedbackItems}
+            selectedId={selectedFeedbackId}
+            onSelect={(id) => {
+              setSelectedFeedbackId(id);
+              setFeedbackItems((prev) =>
+                prev.map((item) => (item.id === id ? { ...item, isRead: true } : item))
+              );
+            }}
+          />
+        );
+      case "profile":
+        return <StudentProfile email={currentUserEmail} />;
+      default:
+        return <StudentAssignments />;
+    }
+  };
+
+  if (authLoading) {
+    return <LoadingScreen label="DELFI 인증 정보를 불러오는 중입니다..." />;
+  }
+
+  if (!role) {
+    return (
+      <LoginScreen
+        email={loginEmail}
+        password={loginPassword}
+        loading={loginLoading}
+        error={loginError}
+        onEmailChange={setLoginEmail}
+        onPasswordChange={setLoginPassword}
+        onLogin={handleLogin}
+      />
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-[#F8F7FB] text-slate-900">
+      <div className="flex min-h-screen">
+        <Sidebar role={role} current={currentPage} onChange={setCurrentPage} />
+        <main className="min-w-0 flex-1 p-4 md:p-6 xl:p-8">
+          <TopHeader
+            title={pageMeta.title}
+            description={pageMeta.description}
+            role={role}
+            unreadCount={role === "student" ? unreadCount : 0}
+            userEmail={currentUserEmail}
+            onLogout={handleLogout}
+          />
+          {role === "admin" ? renderAdminPage() : renderStudentPage()}
+        </main>
+      </div>
+    </div>
+  );
+}
