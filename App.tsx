@@ -1,36 +1,57 @@
 import React, { useEffect, useMemo, useState } from "react";
 import {
-  Bell,
-  Download,
-  FileText,
   Home,
+  FileText,
   Inbox,
-  Loader2,
-  LogOut,
   MessageSquare,
+  Users,
+  User,
+  LogOut,
+  Download,
+  Upload,
   Plus,
   Search,
-  Upload,
-  User,
-  Users,
+  Bell,
+  Loader2,
 } from "lucide-react";
-import { auth, db } from "./firebase";
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from "firebase/auth";
-import { doc, getDoc } from "firebase/firestore";
+import { auth, db, storage } from "./firebase";
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut,
+} from "firebase/auth";
+import {
+  addDoc,
+  collection,
+  doc,
+  getDoc,
+  getDocs,
+  orderBy,
+  query,
+  where,
+} from "firebase/firestore";
+import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
+
+// DELFI Web MVP Shell + Firebase Auth
+// - 관리자/학생 페이지 분리
+// - 웹 알림 UI
+// - 실제 로그인/로그아웃/역할 분기 연결
+// - 과제/제출/피드백 데이터는 아직 목업 기반
 
 type Role = "admin" | "student";
 type AssignmentStatus = "assigned" | "submitted" | "feedback_done";
-type StudentStatus = "active" | "paused" | "ended";
 
 type Assignment = {
   id: string;
   title: string;
+  description?: string;
   assignedTo: string;
-  assignedStudentName: string;
-  assignedStudentGrade: "고1" | "고2" | "고3" | "N수";
+  assignedStudentName?: string;
+  assignedStudentGrade?: string;
   dueDate: string;
   createdAt: string;
   pdfName: string;
+  pdfUrl: string;
   status: AssignmentStatus;
 };
 
@@ -46,11 +67,11 @@ type Submission = {
 type FeedbackItem = {
   id: string;
   assignmentTitle: string;
-  studentName: string;
+  studentName?: string;
   createdAt: string;
   status: "waiting" | "completed";
-  isRead: boolean;
-  summary: string;
+  isRead?: boolean;
+  summary?: string;
 };
 
 type StudentRecord = {
@@ -60,7 +81,7 @@ type StudentRecord = {
   email: string;
   school?: string;
   phone?: string;
-  status: StudentStatus;
+  status?: "active" | "paused" | "ended";
   activeAssignments: number;
   submittedCount: number;
   feedbackDoneCount: number;
@@ -87,45 +108,6 @@ const studentNav: NavItem[] = [
   { key: "profile", label: "내 정보", icon: User },
 ];
 
-const mockStudents: StudentRecord[] = [
-  {
-    id: "u1",
-    name: "김민지",
-    grade: "고3",
-    email: "minji@example.com",
-    school: "대원고",
-    phone: "010-1111-2222",
-    status: "active",
-    activeAssignments: 2,
-    submittedCount: 10,
-    feedbackDoneCount: 8,
-  },
-  {
-    id: "u2",
-    name: "이준호",
-    grade: "N수",
-    email: "junho@example.com",
-    school: "-",
-    phone: "010-2222-3333",
-    status: "active",
-    activeAssignments: 1,
-    submittedCount: 8,
-    feedbackDoneCount: 7,
-  },
-  {
-    id: "u3",
-    name: "박서연",
-    grade: "고2",
-    email: "seoyeon@example.com",
-    school: "세화고",
-    phone: "010-3333-4444",
-    status: "paused",
-    activeAssignments: 3,
-    submittedCount: 12,
-    feedbackDoneCount: 11,
-  },
-];
-
 const mockAssignments: Assignment[] = [
   {
     id: "a1",
@@ -136,6 +118,7 @@ const mockAssignments: Assignment[] = [
     dueDate: "2026-04-14",
     createdAt: "2026-04-11",
     pdfName: "4월_1주차_독서.pdf",
+    pdfUrl: "",
     status: "assigned",
   },
   {
@@ -147,6 +130,7 @@ const mockAssignments: Assignment[] = [
     dueDate: "2026-04-13",
     createdAt: "2026-04-10",
     pdfName: "daily_07.pdf",
+    pdfUrl: "",
     status: "submitted",
   },
   {
@@ -158,6 +142,7 @@ const mockAssignments: Assignment[] = [
     dueDate: "2026-04-12",
     createdAt: "2026-04-09",
     pdfName: "문학_선지_훈련.pdf",
+    pdfUrl: "",
     status: "feedback_done",
   },
 ];
@@ -199,20 +184,57 @@ const mockFeedback: FeedbackItem[] = [
     createdAt: "2026-04-10",
     status: "completed",
     isRead: true,
-    summary: "보기 해석은 좋아졌고, 오답 선지 제거 속도를 더 올리면 좋겠습니다.",
+    summary:
+      "보기 해석은 좋아졌고, 오답 선지 제거 속도를 더 올리면 좋겠습니다.",
+  },
+];
+
+const mockStudents: StudentRecord[] = [
+  {
+    id: "u1",
+    name: "김민지",
+    grade: "고3",
+    email: "minji@example.com",
+    school: "대원고",
+    phone: "010-1111-2222",
+    status: "active",
+    activeAssignments: 2,
+    submittedCount: 10,
+    feedbackDoneCount: 8,
+  },
+  {
+    id: "u2",
+    name: "이준호",
+    grade: "N수",
+    email: "junho@example.com",
+    school: "-",
+    phone: "010-2222-3333",
+    status: "active",
+    activeAssignments: 1,
+    submittedCount: 8,
+    feedbackDoneCount: 7,
+  },
+  {
+    id: "u3",
+    name: "박서연",
+    grade: "고2",
+    email: "seoyeon@example.com",
+    school: "세화고",
+    phone: "010-3333-4444",
+    status: "paused",
+    activeAssignments: 3,
+    submittedCount: 12,
+    feedbackDoneCount: 11,
   },
 ];
 
 function StatusBadge({ status }: { status: string }) {
-  const colorMap: Record<string, string> = {
+  const map: Record<string, string> = {
     assigned: "bg-slate-100 text-slate-700",
     submitted: "bg-blue-50 text-blue-700",
     feedback_done: "bg-violet-50 text-violet-700",
     waiting: "bg-amber-50 text-amber-700",
     completed: "bg-emerald-50 text-emerald-700",
-    active: "bg-emerald-50 text-emerald-700",
-    paused: "bg-amber-50 text-amber-700",
-    ended: "bg-slate-100 text-slate-700",
   };
 
   const labelMap: Record<string, string> = {
@@ -221,46 +243,58 @@ function StatusBadge({ status }: { status: string }) {
     feedback_done: "피드백완료",
     waiting: "피드백 대기",
     completed: "피드백 완료",
-    active: "수강중",
-    paused: "일시중지",
-    ended: "종료",
   };
 
   return (
     <span
-      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
-        colorMap[status] ?? "bg-slate-100 text-slate-700"
-      }`}
+      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${map[status] || "bg-slate-100 text-slate-700"}`}
     >
-      {labelMap[status] ?? status}
+      {labelMap[status] || status}
     </span>
   );
 }
 
-function InfoCard(props: { title: string; value: string; sub?: string }) {
-  const { title, value, sub } = props;
+function InfoCard({
+  title,
+  value,
+  sub,
+}: {
+  title: string;
+  value: string;
+  sub?: string;
+}) {
   return (
     <div className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="text-sm font-medium text-slate-500">{title}</div>
-      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">{value}</div>
+      <div className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+        {value}
+      </div>
       {sub ? <div className="mt-2 text-sm text-slate-500">{sub}</div> : null}
     </div>
   );
 }
 
-function SectionCard(props: {
+function SectionCard({
+  title,
+  description,
+  action,
+  children,
+}: {
   title: string;
   description?: string;
   action?: React.ReactNode;
   children: React.ReactNode;
 }) {
-  const { title, description, action, children } = props;
   return (
     <section className="rounded-3xl border border-slate-200 bg-white p-6 shadow-sm">
       <div className="mb-5 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold tracking-tight text-slate-900">{title}</h2>
-          {description ? <p className="mt-1 text-sm text-slate-500">{description}</p> : null}
+          <h2 className="text-xl font-semibold tracking-tight text-slate-900">
+            {title}
+          </h2>
+          {description ? (
+            <p className="mt-1 text-sm text-slate-500">{description}</p>
+          ) : null}
         </div>
         {action}
       </div>
@@ -269,14 +303,19 @@ function SectionCard(props: {
   );
 }
 
-function PrimaryButton(props: {
+function PrimaryButton({
+  children,
+  className = "",
+  onClick,
+  type = "button",
+  disabled = false,
+}: {
   children: React.ReactNode;
+  className?: string;
   onClick?: () => void;
   type?: "button" | "submit";
-  className?: string;
   disabled?: boolean;
 }) {
-  const { children, onClick, type = "button", className = "", disabled = false } = props;
   return (
     <button
       type={type}
@@ -289,12 +328,15 @@ function PrimaryButton(props: {
   );
 }
 
-function SecondaryButton(props: {
+function SecondaryButton({
+  children,
+  className = "",
+  onClick,
+}: {
   children: React.ReactNode;
-  onClick?: () => void;
   className?: string;
+  onClick?: () => void;
 }) {
-  const { children, onClick, className = "" } = props;
   return (
     <button
       type="button"
@@ -306,12 +348,15 @@ function SecondaryButton(props: {
   );
 }
 
-function Sidebar(props: {
+function Sidebar({
+  role,
+  current,
+  onChange,
+}: {
   role: Role;
   current: string;
   onChange: (key: string) => void;
 }) {
-  const { role, current, onChange } = props;
   const items = role === "admin" ? adminNav : studentNav;
 
   return (
@@ -333,7 +378,6 @@ function Sidebar(props: {
           {items.map((item) => {
             const Icon = item.icon;
             const active = current === item.key;
-
             return (
               <button
                 key={item.key}
@@ -362,7 +406,14 @@ function Sidebar(props: {
   );
 }
 
-function TopHeader(props: {
+function TopHeader({
+  title,
+  description,
+  role,
+  unreadCount,
+  userEmail,
+  onLogout,
+}: {
   title: string;
   description: string;
   role: Role;
@@ -370,15 +421,15 @@ function TopHeader(props: {
   userEmail: string;
   onLogout: () => void;
 }) {
-  const { title, description, role, unreadCount, userEmail, onLogout } = props;
-
   return (
     <header className="mb-8 flex flex-col gap-4 rounded-3xl border border-slate-200 bg-white p-5 shadow-sm md:flex-row md:items-center md:justify-between">
       <div>
         <div className="inline-flex rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
           {role === "admin" ? "관리자 모드" : "학생 모드"}
         </div>
-        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">{title}</h1>
+        <h1 className="mt-3 text-3xl font-semibold tracking-tight text-slate-900">
+          {title}
+        </h1>
         <p className="mt-2 text-sm text-slate-500">{description}</p>
       </div>
 
@@ -389,11 +440,9 @@ function TopHeader(props: {
             <span className="absolute right-2 top-2 h-2.5 w-2.5 rounded-full bg-rose-500" />
           ) : null}
         </button>
-
         <div className="rounded-2xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">
           {userEmail}
         </div>
-
         <SecondaryButton onClick={onLogout}>
           <LogOut className="h-4 w-4" />
           로그아웃
@@ -403,66 +452,60 @@ function TopHeader(props: {
   );
 }
 
-function LoginScreen(props: {
+function LoginScreen({
+  email,
+  password,
+  loading,
+  error,
+  onEmailChange,
+  onPasswordChange,
+  onLogin,
+}: {
   email: string;
   password: string;
   loading: boolean;
   error: string;
   onEmailChange: (value: string) => void;
   onPasswordChange: (value: string) => void;
-  onLogin: (e: React.FormEvent<HTMLFormElement>) => void;
+  onLogin: (e: React.FormEvent) => void;
 }) {
-  const {
-    email,
-    password,
-    loading,
-    error,
-    onEmailChange,
-    onPasswordChange,
-    onLogin,
-  } = props;
-
   return (
-    <div className="min-h-screen bg-[#F8F7FB] px-4 py-8 md:px-6 md:py-10">
-      <div className="mx-auto grid min-h-[88vh] max-w-6xl items-center gap-8 lg:grid-cols-[1.1fr_0.9fr]">
+    <div className="min-h-screen bg-[#F8F7FB] px-4 py-10">
+      <div className="mx-auto grid min-h-[88vh] max-w-6xl items-center gap-10 lg:grid-cols-[1.1fr_0.9fr]">
+        {/* LEFT BRAND AREA */}
         <div className="hidden lg:flex flex-col justify-center">
           <div className="inline-flex w-fit rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
             DELFI
           </div>
 
-          <h1 className="mt-6 text-5xl font-semibold leading-[1.15] tracking-tight text-slate-900 xl:text-6xl">
-            <span className="text-slate-500">매일의 반복이,</span>
+          <h1 className="mt-6 text-5xl font-semibold leading-tight tracking-tight text-slate-900">
+            <span className="text-slate-500">반복하는 매일이,</span>
             <br />
-            <span className="text-slate-900">내일을 만듭니다.</span>
+            <span className="text-slate-900">내일을 만든다.</span>
           </h1>
 
-          <p className="mt-6 text-base leading-7 text-slate-500">매일 받는 피드백, DELFI</p>
+          <p className="mt-6 text-base leading-7 text-slate-500">
+            매일 받는 피드백, DELFI
+          </p>
 
           <div className="mt-10 grid max-w-xl gap-4">
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <div className="text-sm font-semibold text-slate-900">과제 배포</div>
-              <div className="mt-1 text-sm text-slate-500">
-                매일 과제를 빠르게 업로드하고 학생별로 배정합니다.
-              </div>
+              <div className="mt-1 text-sm text-slate-500">PDF 기반으로 빠르게 전달</div>
             </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
               <div className="text-sm font-semibold text-slate-900">제출 관리</div>
-              <div className="mt-1 text-sm text-slate-500">
-                제출 여부와 제출 파일을 한 곳에서 확인합니다.
-              </div>
+              <div className="mt-1 text-sm text-slate-500">학생별 상태 한눈에 확인</div>
             </div>
-
-            <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-              <div className="text-sm font-semibold text-slate-900">피드백 기록</div>
-              <div className="mt-1 text-sm text-slate-500">
-                누적되는 피드백으로 학생의 성장을 관리합니다.
-              </div>
+            <div className="rounded-2xl border border-slate-200 bg-white p-4">
+              <div className="text-sm font-semibold text-slate-900">피드백</div>
+              <div className="mt-1 text-sm text-slate-500">누적되는 성장 데이터</div>
             </div>
           </div>
         </div>
 
-        <div className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm md:p-10">
+        {/* RIGHT LOGIN CARD */}
+        <div className="rounded-[32px] border border-slate-200 bg-white p-8 shadow-sm">
           <div className="inline-flex rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
             로그인
           </div>
@@ -471,29 +514,27 @@ function LoginScreen(props: {
             DELFI 시작하기
           </h2>
 
-          <p className="mt-2 text-sm leading-6 text-slate-500">
+          <p className="mt-2 text-sm text-slate-500">
             계정으로 로그인하여 과제와 피드백을 확인하세요.
           </p>
 
           <form onSubmit={onLogin} className="mt-8 space-y-4">
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">이메일</label>
               <input
                 type="email"
                 value={email}
                 onChange={(e) => onEmailChange(e.target.value)}
-                placeholder="이메일을 입력하세요"
+                placeholder="이메일"
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
               />
             </div>
 
             <div>
-              <label className="mb-2 block text-sm font-medium text-slate-700">비밀번호</label>
               <input
                 type="password"
                 value={password}
                 onChange={(e) => onPasswordChange(e.target.value)}
-                placeholder="비밀번호를 입력하세요"
+                placeholder="비밀번호"
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
               />
             </div>
@@ -504,13 +545,9 @@ function LoginScreen(props: {
               </div>
             ) : null}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="inline-flex w-full items-center justify-center rounded-2xl bg-violet-600 px-4 py-3 text-sm font-semibold text-white transition hover:bg-violet-700 disabled:cursor-not-allowed disabled:bg-violet-300"
-            >
+            <PrimaryButton type="submit" className="w-full" disabled={loading}>
               {loading ? "로그인 중..." : "로그인"}
-            </button>
+            </PrimaryButton>
           </form>
 
           <div className="mt-6 text-center text-xs text-slate-400">
@@ -521,7 +558,7 @@ function LoginScreen(props: {
     </div>
   );
 }
-
+                
 function AdminDashboard() {
   return (
     <div className="space-y-6">
@@ -583,6 +620,21 @@ function AdminDashboard() {
 }
 
 function AdminAssignments() {
+  const [assignmentTitle, setAssignmentTitle] = useState("");
+  const [assignmentDescription, setAssignmentDescription] = useState("");
+  const [selectedStudentEmail, setSelectedStudentEmail] = useState(mockStudents[0]?.email ?? "");
+  const [dueDate, setDueDate] = useState("2026-04-12");
+  const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null);
+
+  const handleStudentChange = (value: string) => {
+    setSelectedStudentEmail(value);
+  };
+
+  const handlePdfChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0] ?? null;
+    setSelectedPdfFile(file);
+  };
+
   return (
     <div className="grid gap-6 xl:grid-cols-[0.95fr_1.05fr]">
       <SectionCard
@@ -596,20 +648,27 @@ function AdminAssignments() {
       >
         <div className="grid gap-4">
           <input
+            value={assignmentTitle}
+            onChange={(e) => setAssignmentTitle(e.target.value)}
             className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
             placeholder="과제 제목"
           />
 
           <textarea
+            value={assignmentDescription}
+            onChange={(e) => setAssignmentDescription(e.target.value)}
             className="min-h-28 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
             placeholder="과제 설명"
           />
 
           <div className="grid gap-4 md:grid-cols-2">
-            <select className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-violet-400">
-              <option>학생 선택</option>
+            <select
+              value={selectedStudentEmail}
+              onChange={(e) => handleStudentChange(e.target.value)}
+              className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-violet-400"
+            >
               {mockStudents.map((student) => (
-                <option key={student.id}>
+                <option key={student.id} value={student.email}>
                   {student.name} / {student.grade}
                 </option>
               ))}
@@ -618,19 +677,32 @@ function AdminAssignments() {
             <input
               className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
               placeholder="배정 학생 이메일"
-              value={mockStudents[0]?.email ?? ""}
+              value={selectedStudentEmail}
               readOnly
             />
           </div>
 
-          <input
-            type="date"
-            className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
-          />
+          <div className="grid gap-2">
+            <label className="text-sm font-semibold text-slate-700">과제 마감일</label>
+            <input
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
+            />
+          </div>
 
-          <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm text-violet-700">
-            <span className="font-medium">과제 PDF 업로드</span>
+          <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm text-violet-700 transition hover:bg-violet-100">
+            <span className="font-medium">
+              {selectedPdfFile ? selectedPdfFile.name : "과제 PDF 업로드"}
+            </span>
             <Upload className="h-4 w-4" />
+            <input
+              type="file"
+              accept="application/pdf"
+              className="hidden"
+              onChange={handlePdfChange}
+            />
           </label>
         </div>
       </SectionCard>
@@ -727,25 +799,19 @@ function AdminFeedback() {
         </div>
       </SectionCard>
 
-      <SectionCard
-        title="피드백 작성"
-        description="텍스트 피드백 또는 피드백 PDF를 회신합니다."
-      >
+      <SectionCard title="피드백 작성" description="텍스트 피드백 또는 피드백 PDF를 회신합니다.">
         <div className="grid gap-4">
           <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
             선택된 제출물 정보가 이 영역에 표시됩니다.
           </div>
-
           <textarea
             className="min-h-52 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
             placeholder="학생에게 전달할 피드백을 작성하세요."
           />
-
           <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm text-violet-700">
             <span className="font-medium">피드백 PDF 업로드</span>
             <Upload className="h-4 w-4" />
           </label>
-
           <div className="flex flex-wrap gap-3">
             <PrimaryButton>피드백 저장</PrimaryButton>
             <SecondaryButton>피드백 완료 처리</SecondaryButton>
@@ -769,7 +835,7 @@ function AdminStudents() {
                   {student.grade} · {student.email}
                 </div>
               </div>
-              <StatusBadge status={student.status} />
+              <StatusBadge status={student.status === "paused" ? "waiting" : "completed"} />
             </div>
 
             <div className="mt-4 space-y-2 text-sm text-slate-500">
@@ -779,21 +845,15 @@ function AdminStudents() {
 
             <div className="mt-5 grid grid-cols-3 gap-3 text-center">
               <div className="rounded-2xl bg-slate-50 p-3">
-                <div className="text-lg font-semibold text-slate-900">
-                  {student.activeAssignments}
-                </div>
+                <div className="text-lg font-semibold text-slate-900">{student.activeAssignments}</div>
                 <div className="mt-1 text-xs text-slate-500">진행 과제</div>
               </div>
               <div className="rounded-2xl bg-slate-50 p-3">
-                <div className="text-lg font-semibold text-slate-900">
-                  {student.submittedCount}
-                </div>
+                <div className="text-lg font-semibold text-slate-900">{student.submittedCount}</div>
                 <div className="mt-1 text-xs text-slate-500">제출 수</div>
               </div>
               <div className="rounded-2xl bg-slate-50 p-3">
-                <div className="text-lg font-semibold text-slate-900">
-                  {student.feedbackDoneCount}
-                </div>
+                <div className="text-lg font-semibold text-slate-900">{student.feedbackDoneCount}</div>
                 <div className="mt-1 text-xs text-slate-500">피드백</div>
               </div>
             </div>
@@ -822,7 +882,6 @@ function StudentAssignments() {
               </div>
               <StatusBadge status={item.status} />
             </div>
-
             <div className="mt-5 flex flex-wrap gap-3">
               <SecondaryButton>
                 <Download className="h-4 w-4" /> 과제 PDF
@@ -849,9 +908,10 @@ function StudentSubmissions() {
           >
             <div>
               <div className="font-semibold text-slate-900">{item.assignmentTitle}</div>
-              <div className="mt-1 text-sm text-slate-500">제출 시각 {item.submittedAt}</div>
+              <div className="mt-1 text-sm text-slate-500">
+                제출 시각 {item.submittedAt}
+              </div>
             </div>
-
             <div className="flex items-center gap-3">
               <StatusBadge status={item.status} />
               <SecondaryButton>
@@ -865,12 +925,15 @@ function StudentSubmissions() {
   );
 }
 
-function StudentFeedback(props: {
+function StudentFeedback({
+  items,
+  selectedId,
+  onSelect,
+}: {
   items: FeedbackItem[];
   selectedId: string | null;
   onSelect: (id: string) => void;
 }) {
-  const { items, selectedId, onSelect } = props;
   const selected = items.find((item) => item.id === selectedId) ?? items[0] ?? null;
 
   return (
@@ -892,7 +955,6 @@ function StudentFeedback(props: {
                   <div className="font-semibold text-slate-900">{item.assignmentTitle}</div>
                   <div className="mt-1 text-sm text-slate-500">도착일 {item.createdAt}</div>
                 </div>
-
                 <div className="flex items-center gap-2">
                   {!item.isRead ? (
                     <span className="inline-flex rounded-full bg-rose-50 px-2.5 py-1 text-[11px] font-semibold text-rose-600">
@@ -916,14 +978,12 @@ function StudentFeedback(props: {
                 {selected.assignmentTitle}
               </div>
             </div>
-
             <div className="rounded-2xl border border-slate-200 bg-white p-5">
               <div className="text-sm font-medium text-slate-500">코치 피드백</div>
               <div className="mt-3 whitespace-pre-wrap text-[15px] leading-7 text-slate-700">
                 {selected.summary || "등록된 피드백이 없습니다."}
               </div>
             </div>
-
             <div className="flex flex-wrap gap-3">
               <SecondaryButton>
                 <Download className="h-4 w-4" /> 피드백 PDF
@@ -943,9 +1003,7 @@ function StudentFeedback(props: {
   );
 }
 
-function StudentProfile(props: { email: string }) {
-  const { email } = props;
-
+function StudentProfile({ email }: { email: string }) {
   return (
     <SectionCard title="내 정보" description="기본 계정 정보를 확인합니다.">
       <div className="grid gap-4 md:grid-cols-2">
@@ -953,7 +1011,6 @@ function StudentProfile(props: { email: string }) {
           <div className="text-sm text-slate-500">역할</div>
           <div className="mt-2 font-semibold text-slate-900">학생</div>
         </div>
-
         <div className="rounded-2xl border border-slate-200 p-4">
           <div className="text-sm text-slate-500">이메일</div>
           <div className="mt-2 font-semibold text-slate-900">{email}</div>
@@ -963,18 +1020,18 @@ function StudentProfile(props: { email: string }) {
   );
 }
 
-function LoadingScreen(props: { label: string }) {
+function LoadingScreen({ label }: { label: string }) {
   return (
     <div className="flex min-h-screen items-center justify-center bg-[#F8F7FB] px-4">
       <div className="rounded-3xl border border-slate-200 bg-white px-8 py-10 text-center shadow-sm">
         <Loader2 className="mx-auto h-7 w-7 animate-spin text-violet-600" />
-        <div className="mt-4 text-sm font-medium text-slate-700">{props.label}</div>
+        <div className="mt-4 text-sm font-medium text-slate-700">{label}</div>
       </div>
     </div>
   );
 }
 
-export default function App() {
+export default function DelfiWebMvpShell() {
   const [authLoading, setAuthLoading] = useState(true);
   const [loginLoading, setLoginLoading] = useState(false);
   const [loginEmail, setLoginEmail] = useState("");
@@ -983,7 +1040,13 @@ export default function App() {
 
   const [currentUserEmail, setCurrentUserEmail] = useState("");
   const [role, setRole] = useState<Role | null>(null);
-  const [currentPage, setCurrentPage] = useState("dashboard");
+  const [currentPage, setCurrentPage] = useState<string>("dashboard");
+
+  const [assignments, setAssignments] = useState<Assignment[]>([]);
+const [assignmentsLoading, setAssignmentsLoading] = useState(false);
+const [assignmentSaveLoading, setAssignmentSaveLoading] = useState(false);
+const [assignmentSaveError, setAssignmentSaveError] = useState("");
+const [assignmentSaveSuccess, setAssignmentSaveSuccess] = useState("");
 
   const [feedbackItems, setFeedbackItems] = useState<FeedbackItem[]>(mockFeedback);
   const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(
@@ -1010,8 +1073,9 @@ export default function App() {
         const userRef = doc(db, "users", user.uid);
         const userSnap = await getDoc(userRef);
 
-        const nextRole: Role =
-          userSnap.exists() && userSnap.data()?.role === "admin" ? "admin" : "student";
+        const nextRole: Role = userSnap.exists() && userSnap.data()?.role === "admin"
+          ? "admin"
+          : "student";
 
         setRole(nextRole);
         setCurrentPage(nextRole === "admin" ? "dashboard" : "assignments");
@@ -1051,7 +1115,6 @@ export default function App() {
           description: "학생별 과제·제출·피드백 이력을 봅니다.",
         },
       };
-
       return map[currentPage] ?? map.dashboard;
     }
 
@@ -1073,11 +1136,10 @@ export default function App() {
         description: "계정 정보를 확인하고 관리합니다.",
       },
     };
-
     return map[currentPage] ?? map.assignments;
   }, [role, currentPage]);
 
-  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError("");
 
@@ -1109,22 +1171,22 @@ export default function App() {
     }
   };
 
-  const renderAdminPage = () => {
-    switch (currentPage) {
-      case "assignments":
-        return <AdminAssignments />;
-      case "submissions":
-        return <AdminSubmissions />;
-      case "feedback":
-        return <AdminFeedback />;
-      case "students":
-        return <AdminStudents />;
-      default:
-        return <AdminDashboard />;
+  const renderPage = () => {
+    if (role === "admin") {
+      switch (currentPage) {
+        case "assignments":
+          return <AdminAssignments />;
+        case "submissions":
+          return <AdminSubmissions />;
+        case "feedback":
+          return <AdminFeedback />;
+        case "students":
+          return <AdminStudents />;
+        default:
+          return <AdminDashboard />;
+      }
     }
-  };
 
-  const renderStudentPage = () => {
     switch (currentPage) {
       case "submissions":
         return <StudentSubmissions />;
@@ -1136,7 +1198,9 @@ export default function App() {
             onSelect={(id) => {
               setSelectedFeedbackId(id);
               setFeedbackItems((prev) =>
-                prev.map((item) => (item.id === id ? { ...item, isRead: true } : item))
+                prev.map((item) =>
+                  item.id === id ? { ...item, isRead: true } : item
+                )
               );
             }}
           />
@@ -1179,7 +1243,7 @@ export default function App() {
             userEmail={currentUserEmail}
             onLogout={handleLogout}
           />
-          {role === "admin" ? renderAdminPage() : renderStudentPage()}
+          {renderPage()}
         </main>
       </div>
     </div>
