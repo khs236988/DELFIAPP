@@ -221,6 +221,7 @@ function StatusBadge({ status }: { status: string }) {
     feedback_done: "bg-violet-50 text-violet-700",
     waiting: "bg-amber-50 text-amber-700",
     completed: "bg-emerald-50 text-emerald-700",
+    late: "bg-yellow-100 text-yellow-700",
   };
 
   const labelMap: Record<string, string> = {
@@ -229,11 +230,14 @@ function StatusBadge({ status }: { status: string }) {
     feedback_done: "피드백완료",
     waiting: "피드백 대기",
     completed: "피드백 완료",
+    late: "늦은 제출",
   };
 
   return (
     <span
-      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${map[status] || "bg-slate-100 text-slate-700"}`}
+      className={`inline-flex items-center rounded-full px-3 py-1 text-xs font-semibold ${
+        map[status] || "bg-slate-100 text-slate-700"
+      }`}
     >
       {labelMap[status] || status}
     </span>
@@ -632,9 +636,6 @@ function AdminAssignments({
   const [dueDate, setDueDate] = useState("2026-04-12");
   const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null);
 
-  const selectedStudent =
-  students.find((student) => student.email === selectedStudentEmail) ?? null;
-
   const handleStudentChange = (value: string) => {
     setSelectedStudentEmail(value);
   };
@@ -654,18 +655,6 @@ function AdminAssignments({
       dueDate,
       pdfFile: selectedPdfFile,
     });
-
-    if (
-      assignmentTitle.trim() &&
-      selectedStudentEmail &&
-      dueDate &&
-      selectedPdfFile
-    ) {
-      setAssignmentTitle("");
-      setAssignmentDescription("");
-      setDueDate("2026-04-12");
-      setSelectedPdfFile(null);
-    }
   };
 
   return (
@@ -696,11 +685,11 @@ function AdminAssignments({
               className="rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm outline-none focus:border-violet-400"
             >
               <option value="">학생 선택</option>
-{students.map((student) => (
-  <option key={student.id} value={student.email}>
-    {student.name} / {student.grade}
-  </option>
-))}
+              {students.map((student) => (
+                <option key={student.id} value={student.email}>
+                  {student.name} / {student.grade}
+                </option>
+              ))}
             </select>
 
             <input
@@ -899,12 +888,30 @@ function StudentDetail({
   assignments,
   submissions,
   onBack,
+  onAssign,
+  saving,
+  saveError,
+  saveSuccess,
 }: {
   student: StudentRecord;
   assignments: Assignment[];
   submissions: Submission[];
   onBack: () => void;
+  onAssign: (payload: {
+    title: string;
+    description: string;
+    studentEmail: string;
+    dueDate: string;
+    pdfFile: File | null;
+  }) => Promise<void>;
+  saving: boolean;
+  saveError: string;
+  saveSuccess: string;
 }) {
+  const [assignmentTitle, setAssignmentTitle] = useState("");
+  const [dueDate, setDueDate] = useState("2026-04-20");
+  const [selectedPdfFile, setSelectedPdfFile] = useState<File | null>(null);
+
   const studentAssignments = assignments.filter(
     (item) => item.assignedTo === student.email
   );
@@ -912,6 +919,10 @@ function StudentDetail({
   const studentSubmissions = submissions.filter(
     (item) => item.studentEmail === student.email
   );
+
+  const isLate = (dueDate: string, submittedAt: string) => {
+  return new Date(submittedAt) > new Date(dueDate);
+  };
 
   const getSubmissionForAssignment = (assignmentId: string) => {
     return (
@@ -943,6 +954,67 @@ function StudentDetail({
         </div>
 
         <div className="rounded-3xl border border-slate-200 bg-white p-5">
+  <div className="text-lg font-semibold text-slate-900">과제 배정</div>
+
+  <div className="mt-4 grid gap-3">
+    <input
+      value={assignmentTitle}
+      onChange={(e) => setAssignmentTitle(e.target.value)}
+      placeholder="과제 제목 입력"
+      className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
+    />
+
+    <input
+      type="date"
+      value={dueDate}
+      onChange={(e) => setDueDate(e.target.value)}
+      className="rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
+    />
+
+    <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm text-violet-700 transition hover:bg-violet-100">
+      <span className="font-medium">
+        {selectedPdfFile?.name ?? "과제 PDF 업로드"}
+      </span>
+      <Upload className="h-4 w-4" />
+      <input
+        type="file"
+        accept="application/pdf"
+        className="hidden"
+        onChange={(e) => setSelectedPdfFile(e.target.files?.[0] ?? null)}
+      />
+    </label>
+
+    <PrimaryButton
+  onClick={async () => {
+    console.log("과제 배정 버튼 클릭");
+    await onAssign({
+      title: assignmentTitle,
+      description: "",
+      studentEmail: student.email,
+      dueDate,
+      pdfFile: selectedPdfFile,
+    });
+  }}
+  disabled={saving}
+>
+  {saving ? "배정 중..." : "과제 배정하기"}
+</PrimaryButton>
+
+{saveError ? (
+  <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+    {saveError}
+  </div>
+) : null}
+
+{saveSuccess ? (
+  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+    {saveSuccess}
+  </div>
+) : null}
+  </div>
+</div>
+
+        <div className="rounded-3xl border border-slate-200 bg-white p-5">
           <div className="text-lg font-semibold text-slate-900">배정 과제</div>
 
           <div className="mt-4 space-y-3">
@@ -953,6 +1025,8 @@ function StudentDetail({
             ) : (
               studentAssignments.map((assignment) => {
                 const submission = getSubmissionForAssignment(assignment.id);
+                const isSubmitted = !!submission;
+const late = submission ? isLate(assignment.dueDate, submission.submittedAt) : false;
 
                 return (
                   <div
@@ -1011,6 +1085,10 @@ function AdminStudents({
   selectedStudentEmail,
   onSelectStudent,
   onBack,
+  handleSaveAssignment,
+  assignmentSaveLoading,
+  assignmentSaveError,
+  assignmentSaveSuccess,
 }: {
   students: StudentRecord[];
   submissions: Submission[];
@@ -1018,20 +1096,35 @@ function AdminStudents({
   selectedStudentEmail: string | null;
   onSelectStudent: (email: string) => void;
   onBack: () => void;
+  handleSaveAssignment: (payload: {
+    title: string;
+    description: string;
+    studentEmail: string;
+    dueDate: string;
+    pdfFile: File | null;
+  }) => Promise<void>;
+  assignmentSaveLoading: boolean;
+  assignmentSaveError: string;
+  assignmentSaveSuccess: string;
 }) {
   const selectedStudent =
-  students.find((student) => student.email === selectedStudentEmail) ?? null;
+    students.find((student) => student.email === selectedStudentEmail) ?? null;
 
-if (selectedStudent) {
-  return (
-    <StudentDetail
-      student={selectedStudent}
-      assignments={assignments}
-      submissions={submissions}
-      onBack={onBack}
-    />
-  );
-}
+  if (selectedStudent) {
+    return (
+      <StudentDetail
+        student={selectedStudent}
+        assignments={assignments}
+        submissions={submissions}
+        onBack={onBack}
+        onAssign={handleSaveAssignment}
+        saving={assignmentSaveLoading}
+        saveError={assignmentSaveError}
+        saveSuccess={assignmentSaveSuccess}
+      />
+    );
+  }
+
   const getStudentStats = (studentEmail: string) => {
     const studentSubs = submissions.filter(
       (item) => item.studentEmail === studentEmail
@@ -1052,15 +1145,13 @@ if (selectedStudent) {
 
           return (
             <button
-  key={student.id}
-  onClick={() => onSelectStudent(student.email)}
-  className="rounded-3xl border border-slate-200 bg-white p-5 hover:shadow-md transition cursor-pointer text-left"
->
+              key={student.id}
+              onClick={() => onSelectStudent(student.email)}
+              className="rounded-3xl border border-slate-200 bg-white p-5 text-left transition hover:shadow-md"
+            >
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="font-semibold text-slate-900">
-                    {student.name}
-                  </div>
+                  <div className="font-semibold text-slate-900">{student.name}</div>
                   <div className="text-sm text-slate-500">
                     {student.grade} · {student.email}
                   </div>
@@ -1091,6 +1182,7 @@ if (selectedStudent) {
 
 function StudentAssignments({
   assignments,
+  submissions,
   currentUserEmail,
   onSubmitAssignment,
   submissionSaveLoading,
@@ -1098,6 +1190,7 @@ function StudentAssignments({
   submissionSaveSuccess,
 }: {
   assignments: Assignment[];
+  submissions: Submission[];
   currentUserEmail: string;
   onSubmitAssignment: (payload: {
     assignment: Assignment;
@@ -1120,6 +1213,14 @@ function StudentAssignments({
     }));
   };
 
+  const isLate = (dueDate: string, submittedAt: string) => {
+    return new Date(submittedAt) > new Date(dueDate);
+  };
+
+  const getSubmissionForAssignment = (assignmentId: string) => {
+    return submissions.find((submission) => submission.assignmentId === assignmentId) ?? null;
+  };
+
   return (
     <SectionCard title="내 과제" description="배정된 과제를 다운로드하고 제출할 수 있습니다.">
       <div className="grid gap-4 lg:grid-cols-2">
@@ -1128,70 +1229,86 @@ function StudentAssignments({
             아직 배정된 과제가 없습니다.
           </div>
         ) : (
-          myAssignments.map((item) => (
-            <div key={item.id} className="rounded-3xl border border-slate-200 bg-white p-5">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="font-semibold text-slate-900">{item.title}</div>
-                  <div className="mt-1 text-sm text-slate-500">
-                    마감 {item.dueDate} · {item.pdfName}
+          myAssignments.map((item) => {
+            const submission = getSubmissionForAssignment(item.id);
+            const late = submission ? isLate(item.dueDate, submission.submittedAt) : false;
+            const isSubmitted = !!submission;
+
+            return (
+              <div key={item.id} className="rounded-3xl border border-slate-200 bg-white p-5">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <div className="font-semibold text-slate-900">{item.title}</div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      마감 {item.dueDate} · {item.pdfName}
+                    </div>
                   </div>
-                </div>
-                <StatusBadge status={item.status} />
-              </div>
 
-              <div className="mt-5 flex flex-wrap gap-3">
-                <a
-                  href={item.pdfUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                >
-                  <Download className="h-4 w-4" /> 과제 PDF
-                </a>
-              </div>
-
-              <div className="mt-4 grid gap-3">
-                <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm text-violet-700 transition hover:bg-violet-100">
-                  <span className="font-medium">
-                    {selectedFiles[item.id]?.name ?? "완료한 PDF 선택"}
-                  </span>
-                  <Upload className="h-4 w-4" />
-                  <input
-                    type="file"
-                    accept="application/pdf"
-                    className="hidden"
-                    onChange={(e) => handleFileChange(item.id, e.target.files?.[0] ?? null)}
+                  <StatusBadge
+                    status={late ? "late" : isSubmitted ? submission.status : "assigned"}
                   />
-                </label>
+                </div>
 
-                <PrimaryButton
-                  onClick={() =>
-                    onSubmitAssignment({
-                      assignment: item,
-                      pdfFile: selectedFiles[item.id] ?? null,
-                    })
-                  }
-                  disabled={submissionSaveLoading}
-                >
-                  <Upload className="h-4 w-4" />
-                  {submissionSaveLoading ? "제출 중..." : "제출하기"}
-                </PrimaryButton>
+                <div className="mt-5 flex flex-wrap gap-3">
+                  <a
+                    href={item.pdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    <Download className="h-4 w-4" /> 과제 PDF
+                  </a>
+                </div>
 
-                {submissionSaveError ? (
-                  <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                    {submissionSaveError}
-                  </div>
-                ) : null}
+                <div className="mt-4 grid gap-3">
+                  <label
+                    className={`flex items-center justify-between rounded-2xl border border-dashed px-4 py-4 text-sm transition ${
+                      isSubmitted
+                        ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400"
+                        : "cursor-pointer border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                    }`}
+                  >
+                    <span className="font-medium">
+                      {selectedFiles[item.id]?.name ?? "과제 PDF 파일 업로드"}
+                    </span>
+                    <Upload className="h-4 w-4" />
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      className="hidden"
+                      disabled={isSubmitted}
+                      onChange={(e) => handleFileChange(item.id, e.target.files?.[0] ?? null)}
+                    />
+                  </label>
 
-                {submissionSaveSuccess ? (
-                  <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                    {submissionSaveSuccess}
-                  </div>
-                ) : null}
+                  <PrimaryButton
+                    onClick={() =>
+                      onSubmitAssignment({
+                        assignment: item,
+                        pdfFile: selectedFiles[item.id] ?? null,
+                      })
+                    }
+                    disabled={submissionSaveLoading || isSubmitted}
+                  >
+                    <Upload className="h-4 w-4" />
+                    {isSubmitted ? "제출 완료" : submissionSaveLoading ? "제출 중..." : "제출하기"}
+                  </PrimaryButton>
+
+                  {submissionSaveError ? (
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                      {submissionSaveError}
+                    </div>
+                  ) : null}
+
+                  {submissionSaveSuccess ? (
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                      {submissionSaveSuccess}
+                    </div>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </SectionCard>
@@ -1728,6 +1845,10 @@ const handleSubmitAssignment = async ({
       selectedStudentEmail={selectedStudentEmail}
       onSelectStudent={setSelectedStudentEmail}
       onBack={() => setSelectedStudentEmail(null)}
+      handleSaveAssignment={handleSaveAssignment}
+      assignmentSaveLoading={assignmentSaveLoading}
+      assignmentSaveError={assignmentSaveError}
+      assignmentSaveSuccess={assignmentSaveSuccess}
     />
   );
         default:
@@ -1761,16 +1882,17 @@ const handleSubmitAssignment = async ({
       case "profile":
         return <StudentProfile email={currentUserEmail} />;
       default:
-        return (
-  <StudentAssignments
-    assignments={assignments}
-    currentUserEmail={currentUserEmail}
-    onSubmitAssignment={handleSubmitAssignment}
-    submissionSaveLoading={submissionSaveLoading}
-    submissionSaveError={submissionSaveError}
-    submissionSaveSuccess={submissionSaveSuccess}
-  />
-);
+  return (
+    <StudentAssignments
+      assignments={assignments}
+      submissions={submissions}
+      currentUserEmail={currentUserEmail}
+      onSubmitAssignment={handleSubmitAssignment}
+      submissionSaveLoading={submissionSaveLoading}
+      submissionSaveError={submissionSaveError}
+      submissionSaveSuccess={submissionSaveSuccess}
+    />
+  );
     }
   };
 
