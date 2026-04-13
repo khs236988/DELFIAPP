@@ -21,14 +21,15 @@ import {
   signOut,
 } from "firebase/auth";
 import {
-  addDoc,
   collection,
-  doc,
-  getDoc,
-  getDocs,
-  orderBy,
   query,
   where,
+  orderBy,
+  getDocs,
+  addDoc,
+  doc,
+  getDoc,
+  updateDoc,
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
@@ -65,6 +66,19 @@ type Submission = {
   pdfName: string;
   pdfUrl: string;
   status: "submitted" | "feedback_done";
+};
+
+type Feedback = {
+  id: string;
+  submissionId: string;
+  assignmentId: string;
+  assignmentTitle: string;
+  studentEmail: string;
+  studentName: string;
+  feedbackPdfName: string;
+  feedbackPdfUrl: string;
+  createdAt: string;
+  isRead: boolean;
 };
 
 type FeedbackItem = {
@@ -786,13 +800,39 @@ function AdminAssignments({
 
 function AdminSubmissions({
   submissions,
+  feedbacks,
+  onUploadFeedback,
+  feedbackUploadLoading,
+  feedbackUploadError,
+  feedbackUploadSuccess,
 }: {
   submissions: Submission[];
+  feedbacks: Feedback[];
+  onUploadFeedback: (payload: {
+    submissionId: string;
+    pdfFile: File | null;
+  }) => Promise<void>;
+  feedbackUploadLoading: boolean;
+  feedbackUploadError: string;
+  feedbackUploadSuccess: string;
 }) {
+  const [selectedFiles, setSelectedFiles] = useState<Record<string, File | null>>({});
+
+  const handleFileChange = (submissionId: string, file: File | null) => {
+    setSelectedFiles((prev) => ({
+      ...prev,
+      [submissionId]: file,
+    }));
+  };
+
+  const getFeedbackForSubmission = (submissionId: string) => {
+    return feedbacks.find((item) => item.submissionId === submissionId) ?? null;
+  };
+
   return (
     <SectionCard
       title="제출 관리"
-      description="학생들이 제출한 과제를 확인합니다."
+      description="학생 제출본을 확인하고 피드백 PDF를 업로드합니다."
     >
       <div className="space-y-4">
         {submissions.length === 0 ? (
@@ -800,36 +840,108 @@ function AdminSubmissions({
             아직 제출된 과제가 없습니다.
           </div>
         ) : (
-          submissions.map((item) => (
-            <div
-              key={item.id}
-              className="flex items-center justify-between rounded-2xl border border-slate-200 bg-white p-4"
-            >
-              <div>
-                <div className="font-semibold text-slate-900">
-                  {item.assignmentTitle}
-                </div>
-                <div className="mt-1 text-sm text-slate-500">
-                  {item.studentName} · {item.studentEmail}
-                </div>
-                <div className="text-xs text-slate-400">
-                  제출일 {item.submittedAt}
-                </div>
-              </div>
+          submissions.map((item) => {
+            const feedback = getFeedbackForSubmission(item.id);
+            const feedbackDone = !!feedback;
 
-              <div className="flex items-center gap-3">
-                <a
-                  href={item.pdfUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="text-sm text-violet-600 hover:underline"
-                >
-                  PDF 보기
-                </a>
-                <StatusBadge status={item.status} />
+            return (
+              <div
+                key={item.id}
+                className="rounded-2xl border border-slate-200 bg-white p-5"
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+                  <div>
+                    <div className="font-semibold text-slate-900">
+                      {item.assignmentTitle}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      {item.studentName} · {item.studentEmail}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      제출일 {item.submittedAt}
+                    </div>
+                  </div>
+
+                  <StatusBadge status={item.status} />
+                </div>
+
+                <div className="mt-4 flex flex-wrap gap-3">
+                  <a
+                    href={item.pdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    <Download className="h-4 w-4" /> 제출 PDF 보기
+                  </a>
+
+                  {feedback ? (
+                    <a
+                      href={feedback.feedbackPdfUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                    >
+                      <Download className="h-4 w-4" /> 피드백 PDF 보기
+                    </a>
+                  ) : null}
+                </div>
+
+                <div className="mt-4 grid gap-3">
+                  <label
+                    className={`flex items-center justify-between rounded-2xl border border-dashed px-4 py-4 text-sm transition ${
+                      feedbackDone
+                        ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400"
+                        : "cursor-pointer border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+                    }`}
+                  >
+                    <span className="font-medium">
+                      {selectedFiles[item.id]?.name ?? "피드백 PDF 업로드"}
+                    </span>
+                    <Upload className="h-4 w-4" />
+                    <input
+                      type="file"
+                      accept="application/pdf"
+                      className="hidden"
+                      disabled={feedbackDone}
+                      onChange={(e) =>
+                        handleFileChange(item.id, e.target.files?.[0] ?? null)
+                      }
+                    />
+                  </label>
+
+                  <PrimaryButton
+                    onClick={() =>
+                      onUploadFeedback({
+                        submissionId: item.id,
+                        pdfFile: selectedFiles[item.id] ?? null,
+                      })
+                    }
+                    disabled={feedbackUploadLoading || feedbackDone}
+                  >
+                    <Upload className="h-4 w-4" />
+                    {feedbackDone
+                      ? "피드백 완료"
+                      : feedbackUploadLoading
+                      ? "업로드 중..."
+                      : "피드백 업로드"}
+                  </PrimaryButton>
+
+                  {feedbackUploadError ? (
+                    <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
+                      {feedbackUploadError}
+                    </div>
+                  ) : null}
+
+                  {feedbackUploadSuccess ? (
+                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                      {feedbackUploadSuccess}
+                    </div>
+                  ) : null}
+                </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
       </div>
     </SectionCard>
@@ -1183,14 +1295,19 @@ function AdminStudents({
 function StudentAssignments({
   assignments,
   submissions,
+  feedbacks,
+  onReadFeedback,
   currentUserEmail,
   onSubmitAssignment,
   submissionSaveLoading,
   submissionSaveError,
   submissionSaveSuccess,
+  clearSubmissionMessages,
 }: {
   assignments: Assignment[];
   submissions: Submission[];
+  feedbacks: Feedback[];
+  onReadFeedback: (feedbackId: string) => Promise<void>;
   currentUserEmail: string;
   onSubmitAssignment: (payload: {
     assignment: Assignment;
@@ -1199,12 +1316,16 @@ function StudentAssignments({
   submissionSaveLoading: boolean;
   submissionSaveError: string;
   submissionSaveSuccess: string;
+  clearSubmissionMessages: () => void;
 }) {
   const myAssignments = assignments.filter(
     (item) => item.assignedTo === currentUserEmail
   );
 
   const [selectedFiles, setSelectedFiles] = useState<Record<string, File | null>>({});
+  useEffect(() => {
+  clearSubmissionMessages();
+}, [currentUserEmail, clearSubmissionMessages]);
 
   const handleFileChange = (assignmentId: string, file: File | null) => {
     setSelectedFiles((prev) => ({
@@ -1231,8 +1352,11 @@ function StudentAssignments({
         ) : (
           myAssignments.map((item) => {
             const submission = getSubmissionForAssignment(item.id);
-            const late = submission ? isLate(item.dueDate, submission.submittedAt) : false;
             const isSubmitted = !!submission;
+            const late = submission ? isLate(item.dueDate, submission.submittedAt) : false;
+            const feedback = submission
+  ? feedbacks.find((f) => f.submissionId === submission.id) ?? null
+  : null;
 
             return (
               <div key={item.id} className="rounded-3xl border border-slate-200 bg-white p-5">
@@ -1258,6 +1382,21 @@ function StudentAssignments({
                   >
                     <Download className="h-4 w-4" /> 과제 PDF
                   </a>
+                  {feedback ? (
+    <a
+      href={feedback.feedbackPdfUrl}
+      target="_blank"
+      rel="noreferrer"
+      onClick={() => onReadFeedback(feedback.id)}
+      className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-700 transition hover:bg-violet-100"
+    >
+      <Download className="h-4 w-4" /> 피드백 PDF 보기
+    </a>
+  ) : submission ? (
+    <div className="inline-flex items-center rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+      피드백 대기중
+    </div>
+  ) : null}
                 </div>
 
                 <div className="mt-4 grid gap-3">
@@ -1489,8 +1628,17 @@ const [submissionsLoading, setSubmissionsLoading] = useState(false);
 const [submissionSaveLoading, setSubmissionSaveLoading] = useState(false);
 const [submissionSaveError, setSubmissionSaveError] = useState("");
 const [submissionSaveSuccess, setSubmissionSaveSuccess] = useState("");
+const clearSubmissionMessages = () => {
+  setSubmissionSaveError("");
+  setSubmissionSaveSuccess("");
+};
   const [assignments, setAssignments] = useState<Assignment[]>([]);
   const [students, setStudents] = useState<StudentRecord[]>([]);
+  const [feedbacks, setFeedbacks] = useState<Feedback[]>([]);
+const [feedbacksLoading, setFeedbacksLoading] = useState(false);
+const [feedbackUploadLoading, setFeedbackUploadLoading] = useState(false);
+const [feedbackUploadError, setFeedbackUploadError] = useState("");
+const [feedbackUploadSuccess, setFeedbackUploadSuccess] = useState("");
 const [assignmentsLoading, setAssignmentsLoading] = useState(false);
 const [assignmentSaveLoading, setAssignmentSaveLoading] = useState(false);
 const [assignmentSaveError, setAssignmentSaveError] = useState("");
@@ -1501,6 +1649,18 @@ const [selectedStudentEmail, setSelectedStudentEmail] = useState<string | null>(
   const [selectedFeedbackId, setSelectedFeedbackId] = useState<string | null>(
     mockFeedback[0]?.id ?? null
   );
+
+  const handleReadFeedback = async (feedbackId: string) => {
+  try {
+    await updateDoc(doc(db, "feedbacks", feedbackId), {
+      isRead: true,
+    });
+
+    await loadFeedbacks();
+  } catch (error) {
+    console.error("피드백 읽음 처리 실패:", error);
+  }
+};
 
   const loadStudents = async () => {
   try {
@@ -1565,12 +1725,33 @@ const [selectedStudentEmail, setSelectedStudentEmail] = useState<string | null>(
         ...data,
       };
     });
-
     setSubmissions(list);
   } catch (error) {
     console.error("제출 불러오기 실패:", error);
   } finally {
     setSubmissionsLoading(false);
+  }
+};
+
+const loadFeedbacks = async () => {
+  setFeedbacksLoading(true);
+  try {
+    const q = query(collection(db, "feedbacks"), orderBy("createdAt", "desc"));
+    const snapshot = await getDocs(q);
+
+    const list: Feedback[] = snapshot.docs.map((docItem) => {
+      const data = docItem.data() as Omit<Feedback, "id">;
+      return {
+        id: docItem.id,
+        ...data,
+      };
+    });
+
+    setFeedbacks(list);
+  } catch (error) {
+    console.error("피드백 불러오기 실패:", error);
+  } finally {
+    setFeedbacksLoading(false);
   }
 };
 
@@ -1600,7 +1781,12 @@ const [selectedStudentEmail, setSelectedStudentEmail] = useState<string | null>(
 
         setRole(nextRole);
         setCurrentPage(nextRole === "admin" ? "dashboard" : "assignments");
-        await Promise.all([loadStudents(), loadAssignments(), loadSubmissions()]);
+        await Promise.all([
+  loadStudents(),
+  loadAssignments(),
+  loadSubmissions(),
+  loadFeedbacks(),
+]);
       } catch (error: any) {
         setLoginError(error?.message || "인증 정보를 불러오지 못했습니다.");
       } finally {
@@ -1814,6 +2000,66 @@ const handleSubmitAssignment = async ({
   }
 };
 
+const handleUploadFeedback = async ({
+  submissionId,
+  pdfFile,
+}: {
+  submissionId: string;
+  pdfFile: File | null;
+}) => {
+  setFeedbackUploadError("");
+  setFeedbackUploadSuccess("");
+
+  if (!pdfFile) {
+    setFeedbackUploadError("피드백 PDF 파일을 선택하세요.");
+    return;
+  }
+
+  try {
+    setFeedbackUploadLoading(true);
+
+    const targetSubmission =
+      submissions.find((item) => item.id === submissionId) ?? null;
+
+    if (!targetSubmission) {
+      setFeedbackUploadError("제출 정보를 찾을 수 없습니다.");
+      return;
+    }
+
+    const safeFileName = `${Date.now()}_${pdfFile.name.replace(/\s+/g, "_")}`;
+    const storageRef = ref(
+      storage,
+      `feedbacks/${targetSubmission.studentEmail}/${targetSubmission.assignmentId}/${safeFileName}`
+    );
+
+    await uploadBytes(storageRef, pdfFile);
+    const feedbackPdfUrl = await getDownloadURL(storageRef);
+
+    await addDoc(collection(db, "feedbacks"), {
+      submissionId: targetSubmission.id,
+      assignmentId: targetSubmission.assignmentId,
+      assignmentTitle: targetSubmission.assignmentTitle,
+      studentEmail: targetSubmission.studentEmail,
+      studentName: targetSubmission.studentName,
+      feedbackPdfName: pdfFile.name,
+      feedbackPdfUrl,
+      createdAt: new Date().toISOString(),
+      isRead: false,
+    });
+
+    await updateDoc(doc(db, "submissions", targetSubmission.id), {
+      status: "feedback_done",
+    });
+
+    setFeedbackUploadSuccess("피드백이 업로드되었습니다.");
+    await Promise.all([loadSubmissions(), loadFeedbacks()]);
+  } catch (error: any) {
+    setFeedbackUploadError(error?.message || "피드백 업로드 중 오류가 발생했습니다.");
+  } finally {
+    setFeedbackUploadLoading(false);
+  }
+};
+
   const renderPage = () => {
     if (role === "admin") {
       switch (currentPage) {
@@ -1832,6 +2078,11 @@ const handleSubmitAssignment = async ({
   return (
     <AdminSubmissions
       submissions={submissions}
+      feedbacks={feedbacks}
+      onUploadFeedback={handleUploadFeedback}
+      feedbackUploadLoading={feedbackUploadLoading}
+      feedbackUploadError={feedbackUploadError}
+      feedbackUploadSuccess={feedbackUploadSuccess}
     />
   );
         case "feedback":
@@ -1886,11 +2137,14 @@ const handleSubmitAssignment = async ({
     <StudentAssignments
       assignments={assignments}
       submissions={submissions}
+      feedbacks={feedbacks}
+      onReadFeedback={handleReadFeedback}
       currentUserEmail={currentUserEmail}
       onSubmitAssignment={handleSubmitAssignment}
       submissionSaveLoading={submissionSaveLoading}
       submissionSaveError={submissionSaveError}
       submissionSaveSuccess={submissionSaveSuccess}
+      clearSubmissionMessages={clearSubmissionMessages}
     />
   );
     }
