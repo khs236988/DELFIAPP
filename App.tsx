@@ -19,6 +19,8 @@ import {
   onAuthStateChanged,
   signInWithEmailAndPassword,
   signOut,
+  createUserWithEmailAndPassword,
+  updateProfile,
 } from "firebase/auth";
 import {
   collection,
@@ -30,6 +32,8 @@ import {
   doc,
   getDoc,
   updateDoc,
+   setDoc,
+  onSnapshot
 } from "firebase/firestore";
 import { getDownloadURL, ref, uploadBytes } from "firebase/storage";
 
@@ -97,6 +101,7 @@ type StudentRecord = {
   grade: "고1" | "고2" | "고3" | "N수";
   email: string;
   school?: string;
+  startDate?: string;
   phone?: string;
   status?: "active" | "paused" | "ended";
   activeAssignments: number;
@@ -233,6 +238,7 @@ function StatusBadge({ status }: { status: string }) {
     assigned: "bg-slate-100 text-slate-700",
     submitted: "bg-blue-50 text-blue-700",
     feedback_done: "bg-violet-50 text-violet-700",
+    feedback_read: "bg-green-100 text-green-700",
     waiting: "bg-amber-50 text-amber-700",
     completed: "bg-emerald-50 text-emerald-700",
     late: "bg-yellow-100 text-yellow-700",
@@ -243,6 +249,7 @@ function StatusBadge({ status }: { status: string }) {
     submitted: "제출완료",
     feedback_done: "피드백완료",
     waiting: "피드백 대기",
+    feedback_read: "피드백 읽음",
     completed: "피드백 완료",
     late: "늦은 제출",
   };
@@ -371,10 +378,11 @@ function Sidebar({
             DELFI
           </div>
           <div className="mt-4 text-2xl font-semibold tracking-tight text-slate-900">
-            {role === "admin" ? "관리자 센터" : "학생 포털"}
+            {role === "admin" ? "관리자 센터" : "DELFI 학습자"}
           </div>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            과제, 제출, 피드백을 한 곳에서 관리하는 학습 운영 웹
+            매일 진행하는 일일 과제, 
+            당일 주어지는 피드백
           </p>
         </div>
 
@@ -399,10 +407,42 @@ function Sidebar({
           })}
         </nav>
 
+        <a
+  href="https://pf.kakao.com/_SnnzX"
+  target="_blank"
+  rel="noreferrer"
+  className="mb-4 block"
+>
+  <div className="relative rounded-2xl bg-gradient-to-r from-violet-100 to-purple-100 px-4 py-4 shadow-sm transition hover:shadow-md">
+
+    {/* 말풍선 꼬리 */}
+    <div className="absolute -bottom-2 left-6 h-4 w-4 rotate-45 bg-purple-100"></div>
+
+    <div className="flex items-center gap-3">
+      
+      {/* 아이콘 */}
+      <div className="flex h-10 w-10 items-center justify-center rounded-full bg-purple-200 text-sm font-bold text-purple-800">
+        💬
+      </div>
+
+      {/* 텍스트 */}
+      <div className="flex flex-col">
+        <span className="text-sm font-semibold text-purple-900">
+          1:1 문의하기
+        </span>
+        <span className="text-xs text-purple-700">
+          채널추가 후, 문의하시면 상담원이 빠르게 답변드릴게요! 😊
+        </span>
+      </div>
+    </div>
+
+  </div>
+</a>
+
         <div className="mt-auto rounded-3xl border border-slate-200 bg-slate-50 p-4">
-          <div className="text-sm font-semibold text-slate-900">운영 메모</div>
+          <div className="text-sm font-semibold text-slate-900">사용자 문의</div>
           <p className="mt-2 text-sm leading-6 text-slate-500">
-            MVP 단계에서는 과제 배포 → PDF 제출 → 피드백 회신 흐름만 빠르게 검증합니다.
+            DELFI를 이용하며 생긴 모든 오류, 개선 요청, 문의 사항은 언제든 문의해주세요. 빠르게 확인하여 답변드리겠습니다. 감사합니다! 😊
           </p>
         </div>
       </div>
@@ -473,19 +513,106 @@ function LoginScreen({
   onPasswordChange: (value: string) => void;
   onLogin: (e: React.FormEvent) => void;
 }) {
+  
+  const [isSignupMode, setIsSignupMode] = useState(false);
+
+const [signupName, setSignupName] = useState("");
+const [signupGrade, setSignupGrade] = useState("");
+const [signupEmail, setSignupEmail] = useState("");
+const [signupPassword, setSignupPassword] = useState("");
+const [signupPasswordConfirm, setSignupPasswordConfirm] = useState("");
+
+const [signupLoading, setSignupLoading] = useState(false);
+const [signupError, setSignupError] = useState("");
+const [signupSuccess, setSignupSuccess] = useState("");
+const handleSignup = async (e: React.FormEvent) => {
+  e.preventDefault();
+  setSignupError("");
+  setSignupSuccess("");
+
+  if (!signupName.trim()) {
+    setSignupError("이름을 입력해주세요.");
+    return;
+  }
+
+  if (!signupGrade.trim()) {
+    setSignupError("학년 또는 현재 등급을 입력해주세요.");
+    return;
+  }
+
+  if (!signupEmail.trim()) {
+    setSignupError("이메일을 입력해주세요.");
+    return;
+  }
+
+  if (signupPassword.length < 6) {
+    setSignupError("비밀번호는 6자 이상이어야 합니다.");
+    return;
+  }
+
+  if (signupPassword !== signupPasswordConfirm) {
+    setSignupError("비밀번호 확인이 일치하지 않습니다.");
+    return;
+  }
+
+  try {
+    setSignupLoading(true);
+
+    const userCredential = await createUserWithEmailAndPassword(
+      auth,
+      signupEmail.trim(),
+      signupPassword
+    );
+
+    await updateProfile(userCredential.user, {
+      displayName: signupName.trim(),
+    });
+
+    await setDoc(doc(db, "users", userCredential.user.uid), {
+      uid: userCredential.user.uid,
+      name: signupName.trim(),
+      email: signupEmail.trim(),
+      grade: signupGrade.trim(),
+      role: "student",
+      createdAt: new Date().toISOString(),
+    });
+
+    setSignupSuccess("회원가입이 완료되었습니다.");
+
+    setSignupName("");
+    setSignupGrade("");
+    setSignupEmail("");
+    setSignupPassword("");
+    setSignupPasswordConfirm("");
+
+    setIsSignupMode(false);
+  } catch (error: any) {
+    if (error?.code === "auth/email-already-in-use") {
+      setSignupError("이미 가입된 이메일입니다.");
+    } else if (error?.code === "auth/invalid-email") {
+      setSignupError("이메일 형식이 올바르지 않습니다.");
+    } else if (error?.code === "auth/weak-password") {
+      setSignupError("비밀번호가 너무 약합니다. 6자 이상으로 입력해주세요.");
+    } else {
+      setSignupError("회원가입 중 오류가 발생했습니다.");
+    }
+  } finally {
+    setSignupLoading(false);
+  }
+};
   return (
     <div className="min-h-screen bg-[#F8F7FB] px-4 py-10">
       <div className="mx-auto grid min-h-[88vh] max-w-6xl items-center gap-10 lg:grid-cols-[1.1fr_0.9fr]">
         {/* LEFT BRAND AREA */}
         <div className="hidden lg:flex flex-col justify-center">
-          <div className="inline-flex w-fit rounded-full bg-violet-50 px-3 py-1 text-xs font-semibold text-violet-700">
-            DELFI
-          </div>
+          <div className="text-violet-600 text-7xl font-black tracking-tight mb-6">
+  DELFI
+</div>
 
           <h1 className="mt-6 text-5xl font-semibold leading-tight tracking-tight text-slate-900">
             <span className="text-slate-500">반복하는 매일이,</span>
             <br />
-            <span className="text-slate-900">내일을 만든다.</span>
+            <span className="text-slate-900">내일을 만듭니다.</span>
           </h1>
 
           <p className="mt-6 text-base leading-7 text-slate-500">
@@ -494,16 +621,16 @@ function LoginScreen({
 
           <div className="mt-10 grid max-w-xl gap-4">
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="text-sm font-semibold text-slate-900">과제 배포</div>
-              <div className="mt-1 text-sm text-slate-500">PDF 기반으로 빠르게 전달</div>
+              <div className="text-sm font-semibold text-slate-900">오늘의 과제 배정</div>
+              <div className="mt-1 text-sm text-slate-500">PDF 당일 과제를 전달받고 학습합니다</div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="text-sm font-semibold text-slate-900">제출 관리</div>
-              <div className="mt-1 text-sm text-slate-500">학생별 상태 한눈에 확인</div>
+              <div className="text-sm font-semibold text-slate-900">제출 관리 솔루션</div>
+              <div className="mt-1 text-sm text-slate-500">학생별 상태를 확인하고 관리합니다</div>
             </div>
             <div className="rounded-2xl border border-slate-200 bg-white p-4">
-              <div className="text-sm font-semibold text-slate-900">피드백</div>
-              <div className="mt-1 text-sm text-slate-500">누적되는 성장 데이터</div>
+              <div className="text-sm font-semibold text-slate-900">피드백 반복</div>
+              <div className="mt-1 text-sm text-slate-500">매일 진행하는 피드백으로 사고를 교정합니다</div>
             </div>
           </div>
         </div>
@@ -519,40 +646,137 @@ function LoginScreen({
           </h2>
 
           <p className="mt-2 text-sm text-slate-500">
-            계정으로 로그인하여 과제와 피드백을 확인하세요.
+            로그인하여 과제와 피드백을 확인하세요.
           </p>
 
-          <form onSubmit={onLogin} className="mt-8 space-y-4">
-            <div>
-              <input
-                type="email"
-                value={email}
-                onChange={(e) => onEmailChange(e.target.value)}
-                placeholder="이메일"
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
-              />
-            </div>
+          <div className="mt-6 flex gap-2">
+  <button
+    type="button"
+    onClick={() => setIsSignupMode(false)}
+    className={`rounded-xl px-4 py-2 text-sm font-semibold ${
+      !isSignupMode
+        ? "bg-slate-900 text-white"
+        : "bg-slate-100 text-slate-600"
+    }`}
+  >
+    로그인
+  </button>
 
-            <div>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => onPasswordChange(e.target.value)}
-                placeholder="비밀번호"
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
-              />
-            </div>
+  <button
+    type="button"
+    onClick={() => setIsSignupMode(true)}
+    className={`rounded-xl px-4 py-2 text-sm font-semibold ${
+      isSignupMode
+        ? "bg-slate-900 text-white"
+        : "bg-slate-100 text-slate-600"
+    }`}
+  >
+    회원가입
+  </button>
+</div>
 
-            {error ? (
-              <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                {error}
-              </div>
-            ) : null}
+          {isSignupMode ? (
+  <form onSubmit={handleSignup} className="mt-8 space-y-4">
+    <div>
+      <input
+        type="text"
+        value={signupName}
+        onChange={(e) => setSignupName(e.target.value)}
+        placeholder="이름"
+        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
+      />
+    </div>
 
-            <PrimaryButton type="submit" className="w-full" disabled={loading}>
-              {loading ? "로그인 중..." : "로그인"}
-            </PrimaryButton>
-          </form>
+    <div>
+      <input
+        type="text"
+        value={signupGrade}
+        onChange={(e) => setSignupGrade(e.target.value)}
+        placeholder="학년"
+        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
+      />
+    </div>
+
+    <div>
+      <input
+        type="email"
+        value={signupEmail}
+        onChange={(e) => setSignupEmail(e.target.value)}
+        placeholder="이메일"
+        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
+      />
+    </div>
+
+    <div>
+      <input
+        type="password"
+        value={signupPassword}
+        onChange={(e) => setSignupPassword(e.target.value)}
+        placeholder="비밀번호 (6자 이상)"
+        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
+      />
+    </div>
+
+    <div>
+      <input
+        type="password"
+        value={signupPasswordConfirm}
+        onChange={(e) => setSignupPasswordConfirm(e.target.value)}
+        placeholder="비밀번호 확인"
+        className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
+      />
+    </div>
+
+    {signupError ? (
+      <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">
+        {signupError}
+      </div>
+    ) : null}
+
+    {signupSuccess ? (
+      <div className="rounded-2xl bg-green-50 px-4 py-3 text-sm text-green-600">
+        {signupSuccess}
+      </div>
+    ) : null}
+
+    <button
+      type="submit"
+      disabled={signupLoading}
+      className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800 disabled:opacity-50"
+    >
+      {signupLoading ? "가입 중..." : "회원가입"}
+    </button>
+  </form>
+) : (
+  <form onSubmit={onLogin} className="mt-8 space-y-4">
+    <div>
+  <input
+    type="email"
+    value={email}
+    onChange={(e) => onEmailChange(e.target.value)}
+    placeholder="이메일"
+    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
+  />
+</div>
+
+<div>
+  <input
+    type="password"
+    value={password}
+    onChange={(e) => onPasswordChange(e.target.value)}
+    placeholder="비밀번호"
+    className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
+  />
+</div>
+
+<button
+  type="submit"
+  className="w-full rounded-2xl bg-slate-900 px-4 py-3 text-sm font-semibold text-white transition hover:bg-slate-800"
+>
+  로그인
+</button>
+  </form>
+)}
 
           <div className="mt-6 text-center text-xs text-slate-400">
             매일의 반복과 피드백이 결과를 만듭니다.
@@ -564,58 +788,142 @@ function LoginScreen({
 }
                 
 function AdminDashboard() {
+  const [assignments, setAssignments] = useState<any[]>([]);
+  const [submissions, setSubmissions] = useState<any[]>([]);
+
+  useEffect(() => {
+    const unsubAssignments = onSnapshot(collection(db, "assignments"), (snapshot: any) => {
+      const list = snapshot.docs.map((doc: any) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setAssignments(list);
+    });
+
+    const unsubSubmissions = onSnapshot(collection(db, "submissions"), (snapshot: any) => {
+      const list = snapshot.docs.map((doc: any) => ({
+        id: doc.id,
+        ...doc.data(),
+      }));
+      setSubmissions(list);
+    });
+
+    return () => {
+      unsubAssignments();
+      unsubSubmissions();
+    };
+  }, []);
+
+  const toDate = (value: any) => {
+    if (!value) return null;
+    if (value?.toDate) return value.toDate();
+    const d = new Date(value);
+    return isNaN(d.getTime()) ? null : d;
+  };
+
+  const stats = useMemo(() => {
+    const now = new Date();
+    const start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+
+    const totalAssignments = assignments.length;
+
+    const todaySubmissions = submissions.filter((item) => {
+      const submittedAt = toDate(item.submittedAt);
+      return submittedAt && submittedAt >= start && submittedAt < end;
+    }).length;
+
+    const pendingFeedback = submissions.filter((item) => {
+      return !item.feedback || item.feedback === "";
+    }).length;
+
+    const missingSubmissions = assignments.filter((assignment) => {
+    const hasSubmission = submissions.some(
+      (submission) => submission.assignmentId === assignment.id
+    );
+    return !hasSubmission;
+  }).length;
+
+    return {
+      totalAssignments,
+      todaySubmissions,
+      pendingFeedback,
+      missingSubmissions,
+    };
+  }, [assignments, submissions]);
+
+  const recentSubmissions = [...submissions]
+    .sort((a, b) => {
+      const aTime = toDate(a.submittedAt)?.getTime() || 0;
+      const bTime = toDate(b.submittedAt)?.getTime() || 0;
+      return bTime - aTime;
+    })
+    .slice(0, 5);
+
   return (
     <div className="space-y-6">
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-        <InfoCard title="등록 과제" value="12" sub="이번 주 기준" />
-        <InfoCard title="오늘 제출" value="7" sub="최근 24시간" />
-        <InfoCard title="미제출" value="5" sub="현재 마감 전/후 포함" />
-        <InfoCard title="피드백 대기" value="3" sub="바로 처리 필요" />
+        <InfoCard title="등록 과제" value={String(stats.totalAssignments)} sub="전체 등록 과제" />
+<InfoCard title="오늘 제출" value={String(stats.todaySubmissions)} sub="오늘 기준" />
+<InfoCard title="미제출" value={String(stats.missingSubmissions)} sub="마감 지났는데 제출 없음" />
+<InfoCard title="피드백 대기" value={String(stats.pendingFeedback)} sub="아직 피드백 안 한 제출물" />
       </div>
 
       <div className="grid gap-6 xl:grid-cols-[1.2fr_0.8fr]">
         <SectionCard title="최근 제출" description="가장 최근 도착한 학생 제출물">
           <div className="space-y-3">
-            {mockSubmissions.map((item) => (
-              <div
-                key={item.id}
-                className="flex flex-col gap-3 rounded-2xl border border-slate-100 p-4 md:flex-row md:items-center md:justify-between"
-              >
-                <div>
-                  <div className="font-semibold text-slate-900">{item.assignmentTitle}</div>
-                  <div className="mt-1 text-sm text-slate-500">
-                    {item.studentName} · {item.studentEmail}
+            {recentSubmissions.length === 0 ? (
+              <div className="rounded-2xl border border-slate-100 p-4 text-sm text-slate-500">
+                아직 제출된 과제가 없습니다.
+              </div>
+            ) : (
+              recentSubmissions.map((item) => (
+                <div
+                  key={item.id}
+                  className="flex flex-col gap-3 rounded-2xl border border-slate-100 p-4 md:flex-row md:items-center md:justify-between"
+                >
+                  <div>
+                    <div className="font-semibold text-slate-900">
+                      {item.assignmentTitle || item.title || "과제명 없음"}
+                    </div>
+                    <div className="mt-1 text-sm text-slate-500">
+                      {(item.studentName || "학생명 없음")} · {(item.studentEmail || "이메일 없음")}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <div className="text-sm text-slate-500">
+                      {toDate(item.submittedAt)?.toLocaleString() || "제출 시간 없음"}
+                    </div>
+                    <StatusBadge status={item.feedbackRead ? "feedback_read" : item.status || "submitted"} />
                   </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <div className="text-sm text-slate-500">{item.submittedAt}</div>
-                  <StatusBadge status={item.status} />
-                </div>
-              </div>
-            ))}
+              ))
+            )}
           </div>
         </SectionCard>
 
-        <SectionCard title="빠른 작업" description="자주 쓰는 기능 바로 이동">
-          <div className="grid gap-3">
-            <button className="rounded-2xl border border-slate-200 p-4 text-left transition hover:bg-slate-50">
-              <div className="font-semibold text-slate-900">새 과제 등록</div>
-              <div className="mt-1 text-sm text-slate-500">
-                PDF 업로드 후 학생에게 배정합니다.
+        <SectionCard title="To-do list" description="당일 업무 한눈에 보기">
+          <div className="rounded-2xl border border-slate-200 bg-white p-5">
+            <div className="text-base font-semibold text-slate-900">
+              오늘 해야 할 일
+            </div>
+
+            <div className="mt-4 space-y-3 text-sm">
+              <div className="flex items-center justify-between rounded-xl bg-red-50 px-3 py-2">
+                <span className="text-red-700">피드백 대기</span>
+                <span className="font-bold text-red-900">{stats.pendingFeedback}개</span>
               </div>
-            </button>
-            <button className="rounded-2xl border border-slate-200 p-4 text-left transition hover:bg-slate-50">
-              <div className="font-semibold text-slate-900">피드백 대기 확인</div>
-              <div className="mt-1 text-sm text-slate-500">
-                미처리 제출물부터 바로 확인합니다.
+
+              <div className="flex items-center justify-between rounded-xl bg-yellow-50 px-3 py-2">
+                <span className="text-yellow-700">미제출 학생</span>
+                <span className="font-bold text-yellow-900">{stats.missingSubmissions}명</span>
               </div>
-            </button>
-            <button className="rounded-2xl border border-slate-200 p-4 text-left transition hover:bg-slate-50">
-              <div className="font-semibold text-slate-900">학생별 현황 보기</div>
-              <div className="mt-1 text-sm text-slate-500">
-                학생별 과제·제출·피드백 이력을 봅니다.
+
+              <div className="flex items-center justify-between rounded-xl bg-green-50 px-3 py-2">
+                <span className="text-green-700">오늘 제출</span>
+                <span className="font-bold text-green-900">{stats.todaySubmissions}개</span>
               </div>
-            </button>
+            </div>
           </div>
         </SectionCard>
       </div>
@@ -779,14 +1087,27 @@ function AdminAssignments({
                   </div>
                   <div className="flex items-center gap-2">
                     <StatusBadge status={item.status} />
-                    <a
-                      href={item.pdfUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                    >
-                      <Download className="h-4 w-4" /> PDF
-                    </a>
+                    <button
+  type="button"
+  onClick={async () => {
+    console.log("PDF 클릭 item:", item);
+
+    try {
+      await updateDoc(doc(db, "submissions", item.id), {
+        feedbackRead: true,
+        feedbackReadAt: new Date().toISOString(),
+      });
+
+      console.log("읽음 업데이트 성공", item.id);
+      window.open(item.pdfUrl, "_blank", "noopener,noreferrer");
+    } catch (error) {
+      console.error("읽음 업데이트 실패", error);
+    }
+  }}
+  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition"
+>
+  <Download className="h-4 w-4" /> PDF
+</button>
                   </div>
                 </div>
               </div>
@@ -948,50 +1269,79 @@ function AdminSubmissions({
   );
 }
 
-function AdminFeedback() {
-  return (
-    <div className="grid gap-6 xl:grid-cols-[0.85fr_1.15fr]">
-      <SectionCard title="피드백 대기" description="먼저 처리할 제출물부터 확인하세요.">
-        <div className="space-y-3">
-          {mockFeedback.map((item) => (
-            <button
-              key={item.id}
-              className="w-full rounded-2xl border border-slate-100 p-4 text-left transition hover:bg-slate-50"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <div className="font-semibold text-slate-900">{item.assignmentTitle}</div>
-                  <div className="mt-1 text-sm text-slate-500">
-                    {item.studentName} · {item.createdAt}
-                  </div>
-                </div>
-                <StatusBadge status={item.status} />
-              </div>
-            </button>
-          ))}
-        </div>
-      </SectionCard>
+function AdminFeedback({
+  feedbacks,
+  submissions,
+  students,
+}: {
+  feedbacks: Feedback[];
+  submissions: Submission[];
+  students: StudentRecord[];
+}) {
+  const getSubmission = (submissionId: string) => {
+    return submissions.find((item) => item.id === submissionId) ?? null;
+  };
 
-      <SectionCard title="피드백 작성" description="텍스트 피드백 또는 피드백 PDF를 회신합니다.">
-        <div className="grid gap-4">
-          <div className="rounded-2xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-600">
-            선택된 제출물 정보가 이 영역에 표시됩니다.
+  const getStudent = (email: string) => {
+    return students.find((item) => item.email === email) ?? null;
+  };
+
+  return (
+    <SectionCard
+      title="피드백 관리"
+      description="업로드된 피드백 목록을 확인합니다."
+    >
+      <div className="space-y-4">
+        {feedbacks.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-sm text-slate-500">
+            아직 업로드된 피드백이 없습니다.
           </div>
-          <textarea
-            className="min-h-52 rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none focus:border-violet-400"
-            placeholder="학생에게 전달할 피드백을 작성하세요."
-          />
-          <label className="flex cursor-pointer items-center justify-between rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm text-violet-700">
-            <span className="font-medium">피드백 PDF 업로드</span>
-            <Upload className="h-4 w-4" />
-          </label>
-          <div className="flex flex-wrap gap-3">
-            <PrimaryButton>피드백 저장</PrimaryButton>
-            <SecondaryButton>피드백 완료 처리</SecondaryButton>
-          </div>
-        </div>
-      </SectionCard>
-    </div>
+        ) : (
+          feedbacks.map((item) => {
+            const submission = getSubmission(item.submissionId);
+            const student = submission
+              ? getStudent(submission.studentEmail)
+              : null;
+
+            return (
+              <div
+                key={item.id}
+                className="rounded-2xl border border-slate-200 bg-white p-5"
+              >
+                <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                  <div>
+                    <div className="font-semibold text-slate-900">
+                      {student?.name || item.studentName} / {student?.grade || "-"}
+                    </div>
+
+                    <div className="mt-1 text-sm text-slate-500">
+                      {item.assignmentTitle}
+                    </div>
+
+                    <div className="mt-1 text-sm text-slate-500">
+                      업로드일 {item.createdAt}
+                    </div>
+
+                    <div className="mt-1 text-sm text-slate-500">
+                      상태: {item.isRead ? "학생 확인 완료" : "학생 미확인"}
+                    </div>
+                  </div>
+
+                  <a
+                    href={item.feedbackPdfUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                  >
+                    <Download className="h-4 w-4" /> 피드백 PDF 보기
+                  </a>
+                </div>
+              </div>
+            );
+          })
+        )}
+      </div>
+    </SectionCard>
   );
 }
 
@@ -1272,11 +1622,11 @@ function AdminStudents({
 
               <div className="mt-4 grid grid-cols-3 gap-3 text-center">
                 <div>
-                  <div className="text-sm text-slate-500">제출</div>
+                  <div className="text-sm text-slate-500">오늘 제출</div>
                   <div className="font-semibold">{stats.submitted}</div>
                 </div>
                 <div>
-                  <div className="text-sm text-slate-500">피드백</div>
+                  <div className="text-sm text-slate-500">피드백 완료</div>
                   <div className="font-semibold">{stats.feedbackDone}</div>
                 </div>
                 <div>
@@ -1383,15 +1733,32 @@ function StudentAssignments({
                     <Download className="h-4 w-4" /> 과제 PDF
                   </a>
                   {feedback ? (
-    <a
-      href={feedback.feedbackPdfUrl}
-      target="_blank"
-      rel="noreferrer"
-      onClick={() => onReadFeedback(feedback.id)}
-      className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-700 transition hover:bg-violet-100"
-    >
-      <Download className="h-4 w-4" /> 피드백 PDF 보기
-    </a>
+    <button
+  type="button"
+  onClick={async () => {
+    console.log("🔥 피드백 클릭:", { feedback, submission });
+
+    try {
+      if (!submission?.id) {
+  console.error("❌ submission.id 없음", { feedback, submission });
+  return;
+}
+
+await updateDoc(doc(db, "submissions", submission.id), {
+  feedbackRead: true,
+  feedbackReadAt: new Date().toISOString(),
+});
+
+console.log("✅ 읽음 업데이트 성공", submission.id);
+      window.open(feedback.feedbackPdfUrl, "_blank", "noopener,noreferrer");
+    } catch (e) {
+      console.error("❌ 읽음 업데이트 실패", e);
+    }
+  }}
+  className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-700 transition"
+>
+  <Download className="h-4 w-4" /> 피드백 PDF 보기
+</button>
   ) : submission ? (
     <div className="inline-flex items-center rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
       피드백 대기중
@@ -1448,6 +1815,62 @@ function StudentAssignments({
               </div>
             );
           })
+        )}
+      </div>
+    </SectionCard>
+  );
+}
+
+function StudentFeedbacks({
+  feedbacks,
+  currentUserEmail,
+  onReadFeedback,
+}: {
+  feedbacks: Feedback[];
+  currentUserEmail: string;
+  onReadFeedback: (id: string) => Promise<void>;
+}) {
+  const myFeedbacks = feedbacks.filter(
+    (f) => f.studentEmail === currentUserEmail
+  );
+
+  return (
+    <SectionCard title="피드백" description="받은 피드백을 확인하세요.">
+      <div className="space-y-4">
+        {myFeedbacks.length === 0 ? (
+          <div className="text-sm text-slate-500">
+            아직 받은 피드백이 없습니다.
+          </div>
+        ) : (
+          myFeedbacks.map((f) => (
+            <div
+              key={f.id}
+              className="rounded-2xl border border-slate-200 p-4 flex items-center justify-between"
+            >
+              <div>
+                <div className="font-semibold">{f.assignmentTitle}</div>
+                <div className="text-sm text-slate-500">
+                  {f.studentName}
+                </div>
+
+                {!f.isRead && (
+                  <div className="text-xs text-amber-600 font-semibold mt-1">
+                    ● 안 읽음
+                  </div>
+                )}
+              </div>
+
+              <a
+                href={f.feedbackPdfUrl}
+                target="_blank"
+                rel="noreferrer"
+                onClick={() => onReadFeedback(f.id)}
+                className="text-sm font-semibold text-violet-600"
+              >
+                PDF 보기
+              </a>
+            </div>
+          ))
         )}
       </div>
     </SectionCard>
@@ -1584,18 +2007,37 @@ function StudentFeedback({
   );
 }
 
-function StudentProfile({ email }: { email: string }) {
+function StudentProfile({
+  email,
+  students,
+}: {
+  email: string;
+  students: StudentRecord[];
+}) {
+  const currentStudent = students.find((item) => item.email === email) ?? null;
+
   return (
-    <SectionCard title="내 정보" description="기본 계정 정보를 확인합니다.">
-      <div className="grid gap-4 md:grid-cols-2">
-        <div className="rounded-2xl border border-slate-200 p-4">
-          <div className="text-sm text-slate-500">역할</div>
-          <div className="mt-2 font-semibold text-slate-900">학생</div>
-        </div>
-        <div className="rounded-2xl border border-slate-200 p-4">
-          <div className="text-sm text-slate-500">이메일</div>
-          <div className="mt-2 font-semibold text-slate-900">{email}</div>
-        </div>
+    <SectionCard
+      title="내 정보"
+      description="계정 정보와 수강 정보를 확인합니다."
+    >
+      <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+        <InfoCard
+          title="이름"
+          value={currentStudent?.name || "-"}
+        />
+        <InfoCard
+          title="이메일"
+          value={currentStudent?.email || email || "-"}
+        />
+        <InfoCard
+          title="학년"
+          value={currentStudent?.grade || "-"}
+        />
+        <InfoCard
+          title="수강 시작일"
+          value={currentStudent?.startDate || "-"}
+        />
       </div>
     </SectionCard>
   );
@@ -1680,6 +2122,7 @@ const [selectedStudentEmail, setSelectedStudentEmail] = useState<string | null>(
         status: data.status || "active",
         activeAssignments: data.activeAssignments || 0,
         submittedCount: data.submittedCount || 0,
+        startDate: data.startDate || "",
         feedbackDoneCount: data.feedbackDoneCount || 0,
       };
     });
@@ -1756,46 +2199,33 @@ const loadFeedbacks = async () => {
 };
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, async (user) => {
-      setAuthLoading(true);
-      setLoginError("");
-
-      try {
-        if (!user) {
-          setCurrentUserEmail("");
-          setRole(null);
-          setCurrentPage("dashboard");
-          setAuthLoading(false);
-          return;
-        }
-
-        const email = user.email || "";
-        setCurrentUserEmail(email);
-
-        const userRef = doc(db, "users", user.uid);
-        const userSnap = await getDoc(userRef);
-
-        const nextRole: Role = userSnap.exists() && userSnap.data()?.role === "admin"
-          ? "admin"
-          : "student";
-
-        setRole(nextRole);
-        setCurrentPage(nextRole === "admin" ? "dashboard" : "assignments");
-        await Promise.all([
-  loadStudents(),
-  loadAssignments(),
-  loadSubmissions(),
-  loadFeedbacks(),
-]);
-      } catch (error: any) {
-        setLoginError(error?.message || "인증 정보를 불러오지 못했습니다.");
-      } finally {
+  const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+    try {
+      if (!firebaseUser) {
+        setRole(null);
         setAuthLoading(false);
+        return;
       }
-    });
 
-    return () => unsubscribe();
-  }, []);
+      const userRef = doc(db, "users", firebaseUser.uid);
+      const userSnap = await getDoc(userRef);
+
+      if (userSnap.exists()) {
+        const userData = userSnap.data();
+        setRole(userData.role || "student");
+      } else {
+        setRole("student");
+      }
+    } catch (error) {
+      console.error("유저 role 불러오기 실패", error);
+      setRole("student");
+    } finally {
+      setAuthLoading(false);
+    }
+  });
+
+  return () => unsubscribe();
+}, []);
 
   const unreadCount = feedbackItems.filter((item) => !item.isRead).length;
 
@@ -2086,8 +2516,15 @@ const handleUploadFeedback = async ({
     />
   );
         case "feedback":
-          return <AdminFeedback />;
+  return (
+    <AdminFeedback
+      feedbacks={feedbacks}
+      submissions={submissions}
+      students={students}
+    />
+  );
         case "students":
+
   return (
     <AdminStudents
       students={students}
@@ -2102,6 +2539,7 @@ const handleUploadFeedback = async ({
       assignmentSaveSuccess={assignmentSaveSuccess}
     />
   );
+
         default:
           return <AdminDashboard />;
       }
@@ -2116,22 +2554,21 @@ const handleUploadFeedback = async ({
     />
   );
       case "feedback":
-        return (
-          <StudentFeedback
-            items={feedbackItems}
-            selectedId={selectedFeedbackId}
-            onSelect={(id) => {
-              setSelectedFeedbackId(id);
-              setFeedbackItems((prev) =>
-                prev.map((item) =>
-                  item.id === id ? { ...item, isRead: true } : item
-                )
-              );
-            }}
-          />
-        );
+  return (
+    <StudentFeedbacks
+      feedbacks={feedbacks}
+      currentUserEmail={currentUserEmail}
+      onReadFeedback={handleReadFeedback}
+    />
+  );
+
       case "profile":
-        return <StudentProfile email={currentUserEmail} />;
+  return (
+    <StudentProfile
+      email={currentUserEmail}
+      students={students}
+    />
+  );
       default:
   return (
     <StudentAssignments
