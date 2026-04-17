@@ -2310,7 +2310,8 @@ console.log("password:", loginPassword);
       await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
       setLoginPassword("");
     } catch (error: any) {
-  setLoginError("아이디 또는 비밀번호를 확인하세요.");
+  console.log("🔥 로그인 에러:", error);
+  setLoginError(error.message);
 } finally {
       setLoginLoading(false);
     }
