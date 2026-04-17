@@ -2699,8 +2699,10 @@ const handleUploadFeedback = async ({
         <p className="md:col-span-2">
           문의 : kccstudio1@gmail.com / 010-8761-8107
         </p>
+        <p className="text-sm text-slate-400 mt-6">
+  © 2026 KCCSTUDIO. All rights reserved.
+</p>
       </div>
-
     </div>
   </div>
 </footer>
