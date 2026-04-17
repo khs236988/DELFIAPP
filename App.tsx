@@ -2666,7 +2666,18 @@ const handleUploadFeedback = async ({
           className="transition hover:text-slate-900"
           aria-label="블로그"
         >
-          <span className="text-3xl font-semibold">b</span>
+          <svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 24 24"
+  className="h-8 w-8"
+  aria-hidden="true"
+>
+  <rect x="2.5" y="2.5" width="19" height="19" rx="4.5" fill="#03C75A" />
+  <path
+    d="M8 7.2h2.1l3.8 5.8V7.2H16v9.6h-2.1L10.1 11v5.8H8V7.2z"
+    fill="white"
+  />
+</svg>
         </a>
 
         <a
@@ -2676,7 +2687,14 @@ const handleUploadFeedback = async ({
           className="transition hover:text-slate-900"
           aria-label="인스타그램"
         >
-          <span className="text-3xl">▣</span>
+          <svg
+  xmlns="http://www.w3.org/2000/svg"
+  viewBox="0 0 24 24"
+  className="h-7 w-7 text-pink-500"
+  fill="currentColor"
+>
+  <path d="M7.75 2h8.5A5.75 5.75 0 0 1 22 7.75v8.5A5.75 5.75 0 0 1 16.25 22h-8.5A5.75 5.75 0 0 1 2 16.25v-8.5A5.75 5.75 0 0 1 7.75 2Zm0 1.8A3.95 3.95 0 0 0 3.8 7.75v8.5a3.95 3.95 0 0 0 3.95 3.95h8.5a3.95 3.95 0 0 0 3.95-3.95v-8.5a3.95 3.95 0 0 0-3.95-3.95Zm8.95 1.35a1.1 1.1 0 1 1 0 2.2 1.1 1.1 0 0 1 0-2.2ZM12 7a5 5 0 1 1 0 10 5 5 0 0 1 0-10Zm0 1.8A3.2 3.2 0 1 0 12 15.2 3.2 3.2 0 0 0 12 8.8Z" />
+</svg>
         </a>
       </div>
 
@@ -2686,7 +2704,7 @@ const handleUploadFeedback = async ({
           매일 받는 피드백-DELFI
         </p>
         <p className="text-2xl font-medium text-slate-900">
-          김코치스튜디오
+          KCCSTUDIO
         </p>
       </div>
 
