@@ -2653,6 +2653,57 @@ const handleUploadFeedback = async ({
           {renderPage()}
         </main>
       </div>
+      <footer className="mt-24 border-t border-slate-200 bg-white/60">
+  <div className="mx-auto max-w-6xl px-6 py-10">
+    <div className="flex flex-col items-center gap-6 text-center">
+      
+      {/* SNS 아이콘 */}
+      <div className="flex items-center gap-6 text-slate-700">
+        <a
+          href="https://blog.naver.com/kccstudio365"
+          target="_blank"
+          rel="noreferrer"
+          className="transition hover:text-slate-900"
+          aria-label="블로그"
+        >
+          <span className="text-3xl font-semibold">b</span>
+        </a>
+
+        <a
+          href="https://www.instagram.com/kcc._.studio?igsh=aHMwNmZjaXh2NmRu&utm_source=qr"
+          target="_blank"
+          rel="noreferrer"
+          className="transition hover:text-slate-900"
+          aria-label="인스타그램"
+        >
+          <span className="text-3xl">▣</span>
+        </a>
+      </div>
+
+      {/* 브랜드 */}
+      <div className="space-y-2">
+        <p className="text-xl text-slate-800">
+          매일 받는 피드백-DELFI
+        </p>
+        <p className="text-2xl font-medium text-slate-900">
+          김코치스튜디오
+        </p>
+      </div>
+
+      {/* 사업자 정보 (좌우 펼친 버전) */}
+      <div className="grid w-full max-w-4xl gap-x-8 gap-y-2 text-center text-[15px] leading-7 text-slate-600 md:grid-cols-2">
+        <p>김코치스튜디오 | 대표자 : 김현서</p>
+        <p>소재지 : 경기도 부천시 원미구 신흥로 223</p>
+        <p>사업자 등록번호 : 221-15-98177</p>
+        <p>통신판매업신고번호 : 2026-경기부천-0369</p>
+        <p className="md:col-span-2">
+          문의 : kccstudio1@gmail.com / 010-8761-8107
+        </p>
+      </div>
+
+    </div>
+  </div>
+</footer>
     </div>
   );
 }
