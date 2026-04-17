@@ -2203,19 +2203,35 @@ const loadFeedbacks = async () => {
     try {
       if (!firebaseUser) {
         setRole(null);
+        setCurrentUserEmail("");
+        setStudents([]);
+        setAssignments([]);
+        setSubmissions([]);
+        setFeedbacks([]);
         setAuthLoading(false);
         return;
       }
 
+      setCurrentUserEmail(firebaseUser.email || "");
+
       const userRef = doc(db, "users", firebaseUser.uid);
       const userSnap = await getDoc(userRef);
 
+      let nextRole: Role = "student";
+
       if (userSnap.exists()) {
         const userData = userSnap.data();
-        setRole(userData.role || "student");
-      } else {
-        setRole("student");
+        nextRole = (userData.role as Role) || "student";
       }
+
+      setRole(nextRole);
+
+      await Promise.all([
+        loadStudents(),
+        loadAssignments(),
+        loadSubmissions(),
+        loadFeedbacks(),
+      ]);
     } catch (error) {
       console.error("유저 role 불러오기 실패", error);
       setRole("student");
