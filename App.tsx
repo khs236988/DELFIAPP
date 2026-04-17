@@ -769,6 +769,11 @@ const handleSignup = async (e: React.FormEvent) => {
     className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-sm outline-none transition focus:border-violet-400"
   />
 </div>
+{error ? (
+  <div className="rounded-2xl bg-red-50 px-4 py-3 text-sm text-red-600">
+    {error}
+  </div>
+) : null}
 
 <button
   type="submit"
@@ -2295,27 +2300,34 @@ const loadFeedbacks = async () => {
   }, [role, currentPage]);
 
   const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError("");
+  e.preventDefault();
+  setLoginError("");
 
-    if (!loginEmail.trim() || !loginPassword.trim()) {
-    setLoginError("아이디 또는 비밀번호를 확인하세요.");
+  if (!loginEmail.trim() || !loginPassword.trim()) {
+    setLoginError("아이디 또는 비밀번호를 확인해주세요.");
     return;
   }
 
-    try {
-      setLoginLoading(true);
-      console.log("email:", loginEmail);
-console.log("password:", loginPassword);
-      await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
-      setLoginPassword("");
-    } catch (error: any) {
-  console.log("🔥 로그인 에러:", error);
-  setLoginError(error.message);
-} finally {
-      setLoginLoading(false);
-    }
-  };
+  try {
+    setLoginLoading(true);
+
+    console.log("로그인 시도 email:", loginEmail.trim());
+    console.log("로그인 시도 password:", loginPassword);
+
+    await signOut(auth);
+    await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
+
+    setLoginPassword("");
+  } catch (error: any) {
+    console.log("🔥 로그인 에러:", error);
+    console.log("🔥 로그인 에러 코드:", error?.code);
+    console.log("🔥 로그인 에러 메시지:", error?.message);
+
+    setLoginError("아이디 또는 비밀번호를 확인해주세요.");
+  } finally {
+    setLoginLoading(false);
+  }
+};
 
   const handleLogout = async () => {
     try {
