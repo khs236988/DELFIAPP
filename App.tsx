@@ -526,6 +526,7 @@ const [signupLoading, setSignupLoading] = useState(false);
 const [signupError, setSignupError] = useState("");
 const [signupSuccess, setSignupSuccess] = useState("");
 const handleSignup = async (e: React.FormEvent) => {
+  console.log("로그인 버튼 눌림");
   e.preventDefault();
   setSignupError("");
   setSignupSuccess("");
@@ -2304,6 +2305,8 @@ const loadFeedbacks = async () => {
 
     try {
       setLoginLoading(true);
+      console.log("email:", loginEmail);
+console.log("password:", loginPassword);
       await signInWithEmailAndPassword(auth, loginEmail.trim(), loginPassword);
       setLoginPassword("");
     } catch (error: any) {
