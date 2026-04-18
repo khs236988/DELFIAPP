@@ -69,7 +69,7 @@ type Submission = {
   submittedAt: string;
   pdfName: string;
   pdfUrl: string;
-  status: "submitted" | "feedback_done";
+   status: "submitted" | "late" | "feedback_done";
 };
 
 type Feedback = {
@@ -242,6 +242,7 @@ function StatusBadge({ status }: { status: string }) {
     waiting: "bg-amber-50 text-amber-700",
     completed: "bg-emerald-50 text-emerald-700",
     late: "bg-yellow-100 text-yellow-700",
+    closed: "bg-slate-200 text-slate-700",
   };
 
   const labelMap: Record<string, string> = {
@@ -252,6 +253,7 @@ function StatusBadge({ status }: { status: string }) {
     feedback_read: "피드백 읽음",
     completed: "피드백 완료",
     late: "늦은 제출",
+    closed: "제출 마감",
   };
 
   return (
@@ -263,6 +265,67 @@ function StatusBadge({ status }: { status: string }) {
       {labelMap[status] || status}
     </span>
   );
+}
+
+function getSubmissionWindow(dueDate?: string) {
+  if (!dueDate || typeof dueDate !== "string") {
+    return null;
+  }
+
+  const parts = dueDate.split("-");
+  if (parts.length !== 3) {
+    return null;
+  }
+
+  const [year, month, day] = parts.map(Number);
+
+  if (!year || !month || !day) {
+    return null;
+  }
+
+  const normalDeadline = new Date(year, month - 1, day, 22, 0, 0, 0);
+  const finalDeadline = new Date(year, month - 1, day, 23, 59, 59, 999);
+
+  return {
+    normalDeadline,
+    finalDeadline,
+  };
+}
+
+function getSubmissionState(dueDate?: string, now = new Date()) {
+  const window = getSubmissionWindow(dueDate);
+
+  if (!window) {
+    return {
+      canSubmit: false,
+      status: "closed" as const,
+      label: "제출 마감",
+    };
+  }
+
+  const { normalDeadline, finalDeadline } = window;
+
+  if (now <= normalDeadline) {
+    return {
+      canSubmit: true,
+      status: "submitted" as const,
+      label: "정상 제출",
+    };
+  }
+
+  if (now <= finalDeadline) {
+    return {
+      canSubmit: true,
+      status: "late" as const,
+      label: "지연 제출",
+    };
+  }
+
+  return {
+    canSubmit: false,
+    status: "closed" as const,
+    label: "제출 마감",
+  };
 }
 
 function InfoCard({
@@ -1227,14 +1290,12 @@ function AdminSubmissions({
                     </span>
                     <Upload className="h-4 w-4" />
                     <input
-                      type="file"
-                      accept="application/pdf"
-                      className="hidden"
-                      disabled={feedbackDone}
-                      onChange={(e) =>
-                        handleFileChange(item.id, e.target.files?.[0] ?? null)
-                      }
-                    />
+  type="file"
+  accept="application/pdf"
+  className="hidden"
+  disabled={feedbackDone}
+  onChange={(e) => handleFileChange(item.id, e.target.files?.[0] ?? null)}
+/>
                   </label>
 
                   <PrimaryButton
@@ -1388,10 +1449,6 @@ function StudentDetail({
     (item) => item.studentEmail === student.email
   );
 
-  const isLate = (dueDate: string, submittedAt: string) => {
-  return new Date(submittedAt) > new Date(dueDate);
-  };
-
   const getSubmissionForAssignment = (assignmentId: string) => {
     return (
       studentSubmissions.find((item) => item.assignmentId === assignmentId) ?? null
@@ -1494,7 +1551,7 @@ function StudentDetail({
               studentAssignments.map((assignment) => {
                 const submission = getSubmissionForAssignment(assignment.id);
                 const isSubmitted = !!submission;
-const late = submission ? isLate(assignment.dueDate, submission.submittedAt) : false;
+ const submitState = getSubmissionState(assignment.dueDate);
 
                 return (
                   <div
@@ -1511,7 +1568,17 @@ const late = submission ? isLate(assignment.dueDate, submission.submittedAt) : f
                         </div>
                       </div>
 
-                      <StatusBadge status={submission ? submission.status : "assigned"} />
+                      <StatusBadge
+  status={
+    submission
+      ? submission.status
+      : !submitState.canSubmit
+      ? "closed"
+      : submitState.status === "late"
+      ? "late"
+      : "assigned"
+  }
+/>
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-3">
@@ -1690,10 +1757,6 @@ function StudentAssignments({
     }));
   };
 
-  const isLate = (dueDate: string, submittedAt: string) => {
-    return new Date(submittedAt) > new Date(dueDate);
-  };
-
   const getSubmissionForAssignment = (assignmentId: string) => {
     return submissions.find((submission) => submission.assignmentId === assignmentId) ?? null;
   };
@@ -1709,7 +1772,7 @@ function StudentAssignments({
           myAssignments.map((item) => {
             const submission = getSubmissionForAssignment(item.id);
             const isSubmitted = !!submission;
-            const late = submission ? isLate(item.dueDate, submission.submittedAt) : false;
+            const submitState = getSubmissionState(item.dueDate);
             const feedback = submission
   ? feedbacks.find((f) => f.submissionId === submission.id) ?? null
   : null;
@@ -1725,8 +1788,16 @@ function StudentAssignments({
                   </div>
 
                   <StatusBadge
-                    status={late ? "late" : isSubmitted ? submission.status : "assigned"}
-                  />
+  status={
+    isSubmitted
+      ? submission.status
+      : !submitState.canSubmit
+      ? "closed"
+      : submitState.status === "late"
+      ? "late"
+      : "assigned"
+  }
+/>
                 </div>
 
                 <div className="mt-5 flex flex-wrap gap-3">
@@ -1775,10 +1846,10 @@ console.log("✅ 읽음 업데이트 성공", submission.id);
                 <div className="mt-4 grid gap-3">
                   <label
                     className={`flex items-center justify-between rounded-2xl border border-dashed px-4 py-4 text-sm transition ${
-                      isSubmitted
-                        ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400"
-                        : "cursor-pointer border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
-                    }`}
+  isSubmitted || !submitState.canSubmit
+    ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400"
+    : "cursor-pointer border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
+}`}
                   >
                     <span className="font-medium">
                       {selectedFiles[item.id]?.name ?? "과제 PDF 파일 업로드"}
@@ -1788,23 +1859,29 @@ console.log("✅ 읽음 업데이트 성공", submission.id);
                       type="file"
                       accept="application/pdf"
                       className="hidden"
-                      disabled={isSubmitted}
+                      disabled={isSubmitted || !submitState.canSubmit}
                       onChange={(e) => handleFileChange(item.id, e.target.files?.[0] ?? null)}
                     />
                   </label>
 
                   <PrimaryButton
-                    onClick={() =>
-                      onSubmitAssignment({
-                        assignment: item,
-                        pdfFile: selectedFiles[item.id] ?? null,
-                      })
-                    }
-                    disabled={submissionSaveLoading || isSubmitted}
-                  >
-                    <Upload className="h-4 w-4" />
-                    {isSubmitted ? "제출 완료" : submissionSaveLoading ? "제출 중..." : "제출하기"}
-                  </PrimaryButton>
+  onClick={() =>
+    onSubmitAssignment({
+      assignment: item,
+      pdfFile: selectedFiles[item.id] ?? null,
+    })
+  }
+  disabled={submissionSaveLoading || isSubmitted || !submitState.canSubmit}
+>
+  <Upload className="h-4 w-4" />
+  {!submitState.canSubmit
+    ? "제출 마감"
+    : isSubmitted
+    ? "제출 완료"
+    : submissionSaveLoading
+    ? "제출 중..."
+    : "제출하기"}
+</PrimaryButton>
 
                   {submissionSaveError ? (
                     <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
@@ -2418,45 +2495,50 @@ const handleSubmitAssignment = async ({
   assignment: Assignment;
   pdfFile: File | null;
 }) => {
-  setSubmissionSaveError("");
-  setSubmissionSaveSuccess("");
-
+  const currentUserName = auth.currentUser?.displayName || "이름없음";
   if (!pdfFile) {
-    setSubmissionSaveError("제출할 PDF 파일을 선택하세요.");
+    setSubmissionSaveError("제출할 PDF를 선택해주세요.");
     return;
   }
 
   try {
     setSubmissionSaveLoading(true);
+    setSubmissionSaveError("");
+    setSubmissionSaveSuccess("");
 
-    const safeFileName = `${Date.now()}_${pdfFile.name.replace(/\s+/g, "_")}`;
-    const storageRef = ref(
-      storage,
-      `submissions/${currentUserEmail}/${assignment.id}/${safeFileName}`
-    );
+    // 1) 현재 시각 기준으로 제출 가능 상태 계산
+    const submitState = getSubmissionState(assignment.dueDate, new Date());
 
+    // 2) 자정 넘어서 제출 불가면 여기서 바로 종료
+    if (!submitState.canSubmit) {
+      setSubmissionSaveError("제출 시간이 마감되었습니다. 00시부터는 제출할 수 없습니다.");
+      return;
+    }
+
+    // 3) 제출 가능하면 파일 업로드 진행
+    const storageRef = ref(storage, `submissions/${assignment.id}/${pdfFile.name}`);
     await uploadBytes(storageRef, pdfFile);
     const pdfUrl = await getDownloadURL(storageRef);
 
-    const student =
-      students.find((item) => item.email === currentUserEmail) ?? null;
-
+    // 4) status를 submitted 또는 late로 저장
     await addDoc(collection(db, "submissions"), {
       assignmentId: assignment.id,
       assignmentTitle: assignment.title,
       studentEmail: currentUserEmail,
-      studentName: student?.name ?? currentUserEmail,
+      studentName: currentUserName,
       submittedAt: new Date().toISOString(),
       pdfName: pdfFile.name,
       pdfUrl,
-      status: "submitted",
+      status: submitState.status,
     });
 
-    setSubmissionSaveSuccess("과제가 제출되었습니다.");
-    await loadSubmissions();
-    await loadAssignments();
-  } catch (error: any) {
-    setSubmissionSaveError(error?.message || "과제 제출 중 오류가 발생했습니다.");
+    setSubmissionSaveSuccess(
+      submitState.status === "late"
+        ? "지연 제출 처리되었습니다."
+        : "정상 제출되었습니다."
+    );
+  } catch (error) {
+    setSubmissionSaveError("제출 중 오류가 발생했습니다.");
   } finally {
     setSubmissionSaveLoading(false);
   }
