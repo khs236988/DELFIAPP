@@ -2484,6 +2484,7 @@ const handleSubmitAssignment = async ({
   pdfFile: File | null;
 }) => {
   const currentUserName = auth.currentUser?.displayName || "이름없음";
+
   if (!pdfFile) {
     setSubmissionSaveError("제출할 PDF를 선택해주세요.");
     return;
@@ -2494,21 +2495,17 @@ const handleSubmitAssignment = async ({
     setSubmissionSaveError("");
     setSubmissionSaveSuccess("");
 
-    // 1) 현재 시각 기준으로 제출 가능 상태 계산
     const submitState = getSubmissionState(assignment.dueDate, new Date());
 
-    // 2) 자정 넘어서 제출 불가면 여기서 바로 종료
     if (!submitState.canSubmit) {
       setSubmissionSaveError("제출 시간이 마감되었습니다. 00시부터는 제출할 수 없습니다.");
       return;
     }
 
-    // 3) 제출 가능하면 파일 업로드 진행
     const storageRef = ref(storage, `submissions/${assignment.id}/${pdfFile.name}`);
     await uploadBytes(storageRef, pdfFile);
     const pdfUrl = await getDownloadURL(storageRef);
 
-    // 4) status를 submitted 또는 late로 저장
     await addDoc(collection(db, "submissions"), {
       assignmentId: assignment.id,
       assignmentTitle: assignment.title,
@@ -2526,9 +2523,9 @@ const handleSubmitAssignment = async ({
         : "정상 제출되었습니다."
     );
   } catch (error: any) {
-  console.error("제출 실패:", error);
-  setSubmissionSaveError(error?.message || "제출 중 오류가 발생했습니다.");
-} finally {
+    console.error("제출 실패:", error);
+    setSubmissionSaveError(error?.message || "제출 중 오류가 발생했습니다.");
+  } finally {
     setSubmissionSaveLoading(false);
   }
 };
