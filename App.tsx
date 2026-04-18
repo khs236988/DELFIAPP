@@ -1158,21 +1158,9 @@ function AdminAssignments({
                     <StatusBadge status={item.status} />
                     <button
   type="button"
-  onClick={async () => {
-    console.log("PDF 클릭 item:", item);
-
-    try {
-      await updateDoc(doc(db, "submissions", item.id), {
-        feedbackRead: true,
-        feedbackReadAt: new Date().toISOString(),
-      });
-
-      console.log("읽음 업데이트 성공", item.id);
-      window.open(item.pdfUrl, "_blank", "noopener,noreferrer");
-    } catch (error) {
-      console.error("읽음 업데이트 실패", error);
-    }
-  }}
+  onClick={() => {
+  window.open(item.pdfUrl, "_blank", "noopener,noreferrer");
+}}
   className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition"
 >
   <Download className="h-4 w-4" /> PDF
@@ -2537,9 +2525,10 @@ const handleSubmitAssignment = async ({
         ? "지연 제출 처리되었습니다."
         : "정상 제출되었습니다."
     );
-  } catch (error) {
-    setSubmissionSaveError("제출 중 오류가 발생했습니다.");
-  } finally {
+  } catch (error: any) {
+  console.error("제출 실패:", error);
+  setSubmissionSaveError(error?.message || "제출 중 오류가 발생했습니다.");
+} finally {
     setSubmissionSaveLoading(false);
   }
 };
