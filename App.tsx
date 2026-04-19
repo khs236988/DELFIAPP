@@ -1,4 +1,5 @@
 import React, { useEffect, useMemo, useState } from "react";
+import { getFunctions, httpsCallable } from "firebase/functions";
 import {
   Home,
   FileText,
@@ -1195,6 +1196,8 @@ function AdminSubmissions({
   feedbackUploadSuccess: string;
 }) {
   const [selectedFiles, setSelectedFiles] = useState<Record<string, File | null>>({});
+  const [aiFeedbackMap, setAiFeedbackMap] = useState<Record<string, string>>({});
+const [aiLoadingId, setAiLoadingId] = useState<string | null>(null);
 
   const handleFileChange = (submissionId: string, file: File | null) => {
     setSelectedFiles((prev) => ({
@@ -1206,6 +1209,43 @@ function AdminSubmissions({
   const getFeedbackForSubmission = (submissionId: string) => {
     return feedbacks.find((item) => item.submissionId === submissionId) ?? null;
   };
+
+  const handleGenerateAIFeedback = async (submission: Submission) => {
+  try {
+    setAiLoadingId(submission.id);
+
+    const functions = getFunctions(undefined, "us-central1");
+    const generateFeedback = httpsCallable(functions, "generateFeedback");
+
+    const res: any = await generateFeedback({
+      text: `
+학생: ${submission.studentName}
+과제: ${submission.assignmentTitle}
+
+이 학생의 제출을 기반으로 DELFI 방식의 피드백을 작성해줘.
+형식:
+[핵심 약점]
+[반복 실수]
+[피드백]
+[다음 과제 방향]
+      `,
+    });
+
+    setAiFeedbackMap((prev) => ({
+      ...prev,
+      [submission.id]: res.data.result || "응답 없음",
+    }));
+  } catch (error) {
+    console.error("AI 호출 실패:", error);
+
+    setAiFeedbackMap((prev) => ({
+      ...prev,
+      [submission.id]: "AI 피드백 생성 중 오류가 발생했습니다.",
+    }));
+  } finally {
+    setAiLoadingId(null);
+  }
+};
 
   return (
     <SectionCard
@@ -1253,6 +1293,10 @@ function AdminSubmissions({
                     <Download className="h-4 w-4" /> 제출 PDF 보기
                   </a>
 
+                  <SecondaryButton onClick={() => handleGenerateAIFeedback(item)}>
+  {aiLoadingId === item.id ? "AI 생성 중..." : "AI 피드백 초안 생성"}
+</SecondaryButton>
+
                   {feedback ? (
                     <a
                       href={feedback.feedbackPdfUrl}
@@ -1264,6 +1308,15 @@ function AdminSubmissions({
                     </a>
                   ) : null}
                 </div>
+
+                {aiFeedbackMap[item.id] ? (
+  <div className="mt-4 rounded-2xl border border-violet-200 bg-violet-50 p-4">
+    <div className="text-sm font-semibold text-violet-900">AI 피드백 초안</div>
+    <div className="mt-2 whitespace-pre-wrap text-sm leading-6 text-slate-700">
+      {aiFeedbackMap[item.id]}
+    </div>
+  </div>
+) : null}
 
                 <div className="mt-4 grid gap-3">
                   <label
@@ -1706,187 +1759,125 @@ function AdminStudents({
 function StudentAssignments({
   assignments,
   submissions,
-  feedbacks,
-  onReadFeedback,
   currentUserEmail,
+  currentUserName,
   onSubmitAssignment,
-  submissionSaveLoading,
-  submissionSaveError,
-  submissionSaveSuccess,
-  clearSubmissionMessages,
 }: {
   assignments: Assignment[];
   submissions: Submission[];
-  feedbacks: Feedback[];
-  onReadFeedback: (feedbackId: string) => Promise<void>;
   currentUserEmail: string;
-  onSubmitAssignment: (payload: {
-    assignment: Assignment;
-    pdfFile: File | null;
-  }) => Promise<void>;
-  submissionSaveLoading: boolean;
-  submissionSaveError: string;
-  submissionSaveSuccess: string;
-  clearSubmissionMessages: () => void;
+  currentUserName: string;
+  onSubmitAssignment: (assignment: Assignment, file: File | null) => Promise<void>;
 }) {
   const myAssignments = assignments.filter(
-    (item) => item.assignedTo === currentUserEmail
-  );
+  (assignment) => assignment.assignedTo === currentUserEmail
+);
 
-  const [selectedFiles, setSelectedFiles] = useState<Record<string, File | null>>({});
-  useEffect(() => {
-  clearSubmissionMessages();
-}, [currentUserEmail, clearSubmissionMessages]);
+  const getDisplayStatus = (assignment: Assignment) => {
+    const mySubmission = submissions.find(
+      (submission) =>
+        submission.assignmentId === assignment.id &&
+        submission.studentEmail === currentUserEmail
+    );
 
-  const handleFileChange = (assignmentId: string, file: File | null) => {
-    setSelectedFiles((prev) => ({
-      ...prev,
-      [assignmentId]: file,
-    }));
+    // 제출문서 기준으로 판정
+    if (mySubmission) {
+      if (mySubmission.status === "feedback_done") return "feedback_done";
+      if (mySubmission.status === "late") return "late";
+      return "submitted";
+    }
+
+    // 제출 없으면 기본 상태
+    return "assigned";
   };
 
-  const getSubmissionForAssignment = (assignmentId: string) => {
-    return submissions.find((submission) => submission.assignmentId === assignmentId) ?? null;
-  };
+  if (myAssignments.length === 0) {
+    return (
+      <SectionCard
+        title="내 과제"
+        description="배정된 과제가 없습니다."
+      >
+        <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-sm text-slate-500">
+          아직 배정된 과제가 없습니다.
+        </div>
+      </SectionCard>
+    );
+  }
 
   return (
-    <SectionCard title="내 과제" description="배정된 과제를 다운로드하고 제출할 수 있습니다.">
-      <div className="grid gap-4 lg:grid-cols-2">
-        {myAssignments.length === 0 ? (
-          <div className="rounded-2xl border border-dashed border-slate-200 p-8 text-sm text-slate-500">
-            아직 배정된 과제가 없습니다.
-          </div>
-        ) : (
-          myAssignments.map((item) => {
-            const submission = getSubmissionForAssignment(item.id);
-            const isSubmitted = !!submission;
-            const submitState = getSubmissionState(item.dueDate);
-            const feedback = submission
-  ? feedbacks.find((f) => f.submissionId === submission.id) ?? null
-  : null;
+    <SectionCard
+      title="내 과제"
+      description="매일 진행하는 일일 과제와 당일 주어지는 피드백"
+    >
+      <div className="grid gap-6 md:grid-cols-2">
+        {myAssignments.map((assignment) => {
+          const displayStatus = getDisplayStatus(assignment);
 
-            return (
-              <div key={item.id} className="rounded-3xl border border-slate-200 bg-white p-5">
-                <div className="flex items-start justify-between gap-3">
-                  <div>
-                    <div className="font-semibold text-slate-900">{item.title}</div>
-                    <div className="mt-1 text-sm text-slate-500">
-                      마감 {item.dueDate} · {item.pdfName}
-                    </div>
+          return (
+            <div
+              key={assignment.id}
+              className="glass-card rounded-[32px] p-6"
+            >
+              <div className="mb-4 flex items-start justify-between gap-3">
+                <div>
+                  <div className="text-2xl font-bold text-slate-900">
+                    {assignment.title}
                   </div>
-
-                  <StatusBadge
-  status={
-    isSubmitted
-      ? submission.status
-      : !submitState.canSubmit
-      ? "closed"
-      : submitState.status === "late"
-      ? "late"
-      : "assigned"
-  }
-/>
+                  <div className="mt-2 text-sm text-slate-500">
+                    마감 {assignment.dueDate || "-"} · {assignment.pdfName || "프로그램 가이드.pdf"}
+                  </div>
                 </div>
 
-                <div className="mt-5 flex flex-wrap gap-3">
-                  <a
-                    href={item.pdfUrl}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+                <StatusBadge status={displayStatus} />
+              </div>
+
+              <div className="flex gap-3">
+                <a
+                  href={assignment.pdfUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="btn-secondary"
+                >
+                  과제 PDF
+                </a>
+
+                {displayStatus === "submitted" || displayStatus === "late" || displayStatus === "feedback_done" ? (
+                  <button
+                    type="button"
+                    className="rounded-2xl border border-amber-200 bg-amber-50 px-5 py-3 text-sm font-bold text-amber-700"
+                    disabled
                   >
-                    <Download className="h-4 w-4" /> 과제 PDF
-                  </a>
-                  {feedback ? (
-    <button
-  type="button"
-  onClick={async () => {
-    console.log("🔥 피드백 클릭:", { feedback, submission });
-
-    try {
-      if (!submission?.id) {
-  console.error("❌ submission.id 없음", { feedback, submission });
-  return;
-}
-
-await updateDoc(doc(db, "submissions", submission.id), {
-  feedbackRead: true,
-  feedbackReadAt: new Date().toISOString(),
-});
-
-console.log("✅ 읽음 업데이트 성공", submission.id);
-      window.open(feedback.feedbackPdfUrl, "_blank", "noopener,noreferrer");
-    } catch (e) {
-      console.error("❌ 읽음 업데이트 실패", e);
-    }
-  }}
-  className="inline-flex items-center gap-2 rounded-2xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm font-semibold text-violet-700 transition"
->
-  <Download className="h-4 w-4" /> 피드백 PDF 보기
-</button>
-  ) : submission ? (
-    <div className="inline-flex items-center rounded-2xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
-      피드백 대기중
-    </div>
-  ) : null}
-                </div>
-
-                <div className="mt-4 grid gap-3">
-                  <label
-                    className={`flex items-center justify-between rounded-2xl border border-dashed px-4 py-4 text-sm transition ${
-  isSubmitted || !submitState.canSubmit
-    ? "cursor-not-allowed border-slate-200 bg-slate-50 text-slate-400"
-    : "cursor-pointer border-violet-200 bg-violet-50 text-violet-700 hover:bg-violet-100"
-}`}
-                  >
-                    <span className="font-medium">
-                      {selectedFiles[item.id]?.name ?? "과제 PDF 파일 업로드"}
-                    </span>
-                    <Upload className="h-4 w-4" />
+                    {displayStatus === "feedback_done" ? "피드백완료" : "피드백 대기중"}
+                  </button>
+                ) : (
+                  <label className="flex-1 cursor-pointer rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm font-medium text-violet-700 transition hover:bg-violet-100">
+                    과제 PDF 파일 업로드
                     <input
                       type="file"
                       accept="application/pdf"
                       className="hidden"
-                      disabled={isSubmitted || !submitState.canSubmit}
-                      onChange={(e) => handleFileChange(item.id, e.target.files?.[0] ?? null)}
+                      onChange={async (e) => {
+                        const file = e.target.files?.[0] ?? null;
+                        if (!file) return;
+                        await onSubmitAssignment(assignment, file);
+                      }}
                     />
                   </label>
-
-                  <PrimaryButton
-  onClick={() =>
-    onSubmitAssignment({
-      assignment: item,
-      pdfFile: selectedFiles[item.id] ?? null,
-    })
-  }
-  disabled={submissionSaveLoading || isSubmitted || !submitState.canSubmit}
->
-  <Upload className="h-4 w-4" />
-  {!submitState.canSubmit
-    ? "제출 마감"
-    : isSubmitted
-    ? "제출 완료"
-    : submissionSaveLoading
-    ? "제출 중..."
-    : "제출하기"}
-</PrimaryButton>
-
-                  {submissionSaveError ? (
-                    <div className="rounded-2xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-700">
-                      {submissionSaveError}
-                    </div>
-                  ) : null}
-
-                  {submissionSaveSuccess ? (
-                    <div className="rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
-                      {submissionSaveSuccess}
-                    </div>
-                  ) : null}
-                </div>
+                )}
               </div>
-            );
-          })
-        )}
+
+              {displayStatus === "submitted" || displayStatus === "late" || displayStatus === "feedback_done" ? (
+                <div className="mt-4 rounded-2xl bg-violet-50 px-4 py-4 text-sm text-violet-700">
+                  {displayStatus === "feedback_done"
+                    ? "피드백이 완료되었습니다."
+                    : displayStatus === "late"
+                    ? "지연 제출이 완료되었습니다."
+                    : "제출이 완료되었습니다."}
+                </div>
+              ) : null}
+            </div>
+          );
+        })}
       </div>
     </SectionCard>
   );
@@ -2131,6 +2122,8 @@ export default function DelfiWebMvpShell() {
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPassword, setLoginPassword] = useState("");
   const [loginError, setLoginError] = useState("");
+  const [currentUserName, setCurrentUserName] = useState("");
+  
 
   const [currentUserEmail, setCurrentUserEmail] = useState("");
   const [role, setRole] = useState<Role | null>(null);
@@ -2476,57 +2469,42 @@ const loadFeedbacks = async () => {
   }
 };
 
-const handleSubmitAssignment = async ({
-  assignment,
-  pdfFile,
-}: {
-  assignment: Assignment;
-  pdfFile: File | null;
-}) => {
-  const currentUserName = auth.currentUser?.displayName || "이름없음";
-
-  if (!pdfFile) {
-    setSubmissionSaveError("제출할 PDF를 선택해주세요.");
-    return;
-  }
+const handleSubmitAssignment = async (assignment: Assignment, file: File | null) => {
+  if (!file) return;
 
   try {
-    setSubmissionSaveLoading(true);
-    setSubmissionSaveError("");
-    setSubmissionSaveSuccess("");
+    const storageRef = ref(
+      storage,
+      `submissions/${assignment.id}/${Date.now()}_${file.name}`
+    );
 
-    const submitState = getSubmissionState(assignment.dueDate, new Date());
+    await uploadBytes(storageRef, file);
+    const fileUrl = await getDownloadURL(storageRef);
 
-    if (!submitState.canSubmit) {
-      setSubmissionSaveError("제출 시간이 마감되었습니다. 00시부터는 제출할 수 없습니다.");
-      return;
-    }
-
-    const storageRef = ref(storage, `submissions/${assignment.id}/${pdfFile.name}`);
-    await uploadBytes(storageRef, pdfFile);
-    const pdfUrl = await getDownloadURL(storageRef);
+    const now = new Date();
+    const due = assignment.dueDate ? new Date(assignment.dueDate) : null;
+    const isLate = due ? now > due : false;
 
     await addDoc(collection(db, "submissions"), {
       assignmentId: assignment.id,
       assignmentTitle: assignment.title,
       studentEmail: currentUserEmail,
-      studentName: currentUserName,
-      submittedAt: new Date().toISOString(),
-      pdfName: pdfFile.name,
-      pdfUrl,
-      status: submitState.status,
+      studentName: currentUserName || "이름없음",
+      submittedAt: now.toISOString(),
+      fileUrl,
+      fileName: file.name,
+      status: isLate ? "late" : "submitted",
     });
 
-    setSubmissionSaveSuccess(
-      submitState.status === "late"
-        ? "지연 제출 처리되었습니다."
-        : "정상 제출되었습니다."
-    );
-  } catch (error: any) {
-    console.error("제출 실패:", error);
-    setSubmissionSaveError(error?.message || "제출 중 오류가 발생했습니다.");
-  } finally {
-    setSubmissionSaveLoading(false);
+    // ✅ 이거 추가: assignment 문서도 같이 상태 반영
+    await updateDoc(doc(db, "assignments", assignment.id), {
+      status: "submitted",
+    });
+
+    alert("제출이 완료되었습니다.");
+  } catch (error) {
+    console.error("과제 제출 실패:", error);
+    alert("과제 제출 중 오류가 발생했습니다.");
   }
 };
 
@@ -2672,17 +2650,12 @@ const handleUploadFeedback = async ({
       default:
   return (
     <StudentAssignments
-      assignments={assignments}
-      submissions={submissions}
-      feedbacks={feedbacks}
-      onReadFeedback={handleReadFeedback}
-      currentUserEmail={currentUserEmail}
-      onSubmitAssignment={handleSubmitAssignment}
-      submissionSaveLoading={submissionSaveLoading}
-      submissionSaveError={submissionSaveError}
-      submissionSaveSuccess={submissionSaveSuccess}
-      clearSubmissionMessages={clearSubmissionMessages}
-    />
+  assignments={assignments}
+  submissions={submissions}
+  currentUserEmail={currentUserEmail}
+  currentUserName={currentUserName}
+  onSubmitAssignment={handleSubmitAssignment}
+/>
   );
     }
   };
