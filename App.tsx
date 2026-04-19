@@ -1769,9 +1769,12 @@ function StudentAssignments({
   currentUserName: string;
   onSubmitAssignment: (assignment: Assignment, file: File | null) => Promise<void>;
 }) {
+  const [selectedFiles, setSelectedFiles] = useState<Record<string, File | null>>({});
+  const [submittingId, setSubmittingId] = useState<string | null>(null);
+
   const myAssignments = assignments.filter(
-  (assignment) => assignment.assignedTo === currentUserEmail
-);
+    (assignment) => assignment.assignedTo === currentUserEmail
+  );
 
   const getDisplayStatus = (assignment: Assignment) => {
     const mySubmission = submissions.find(
@@ -1780,23 +1783,18 @@ function StudentAssignments({
         submission.studentEmail === currentUserEmail
     );
 
-    // 제출문서 기준으로 판정
     if (mySubmission) {
       if (mySubmission.status === "feedback_done") return "feedback_done";
       if (mySubmission.status === "late") return "late";
       return "submitted";
     }
 
-    // 제출 없으면 기본 상태
     return "assigned";
   };
 
   if (myAssignments.length === 0) {
     return (
-      <SectionCard
-        title="내 과제"
-        description="배정된 과제가 없습니다."
-      >
+      <SectionCard title="내 과제" description="배정된 과제가 없습니다.">
         <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-sm text-slate-500">
           아직 배정된 과제가 없습니다.
         </div>
@@ -1814,10 +1812,7 @@ function StudentAssignments({
           const displayStatus = getDisplayStatus(assignment);
 
           return (
-            <div
-              key={assignment.id}
-              className="glass-card rounded-[32px] p-6"
-            >
+            <div key={assignment.id} className="glass-card rounded-[32px] p-6">
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
                   <div className="text-2xl font-bold text-slate-900">
@@ -1851,20 +1846,55 @@ function StudentAssignments({
                   </button>
                 ) : (
                   <label className="flex-1 cursor-pointer rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm font-medium text-violet-700 transition hover:bg-violet-100">
-                    과제 PDF 파일 업로드
+                    {selectedFiles[assignment.id]?.name || "과제 PDF 파일 업로드"}
                     <input
                       type="file"
                       accept="application/pdf"
                       className="hidden"
-                      onChange={async (e) => {
+                      onChange={(e) => {
                         const file = e.target.files?.[0] ?? null;
-                        if (!file) return;
-                        await onSubmitAssignment(assignment, file);
+                        setSelectedFiles((prev) => ({
+                          ...prev,
+                          [assignment.id]: file,
+                        }));
                       }}
                     />
                   </label>
                 )}
               </div>
+
+              {displayStatus !== "submitted" &&
+              displayStatus !== "late" &&
+              displayStatus !== "feedback_done" ? (
+                <PrimaryButton
+                  className="mt-4 w-full"
+                  disabled={!selectedFiles[assignment.id] || submittingId === assignment.id}
+                  onClick={async () => {
+                    const file = selectedFiles[assignment.id];
+                    if (!file) {
+                      alert("먼저 제출할 PDF 파일을 선택해주세요.");
+                      return;
+                    }
+
+                    try {
+                      setSubmittingId(assignment.id);
+                      await onSubmitAssignment(assignment, file);
+                      setSelectedFiles((prev) => ({
+                        ...prev,
+                        [assignment.id]: null,
+                      }));
+                    } catch (error) {
+                      console.error("제출 실패:", error);
+                      alert("제출 중 오류가 발생했습니다.");
+                    } finally {
+                      setSubmittingId(null);
+                    }
+                  }}
+                >
+                  <Upload className="h-4 w-4" />
+                  {submittingId === assignment.id ? "제출 중..." : "제출하기"}
+                </PrimaryButton>
+              ) : null}
 
               {displayStatus === "submitted" || displayStatus === "late" || displayStatus === "feedback_done" ? (
                 <div className="mt-4 rounded-2xl bg-violet-50 px-4 py-4 text-sm text-violet-700">
