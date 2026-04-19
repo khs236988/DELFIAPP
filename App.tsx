@@ -1231,6 +1231,10 @@ const [aiLoadingId, setAiLoadingId] = useState<string | null>(null);
       `,
     });
 
+    await updateDoc(doc(db, "submissions", submission.id), {
+  aiFeedback: res.data.result,
+});
+
     setAiFeedbackMap((prev) => ({
       ...prev,
       [submission.id]: res.data.result || "응답 없음",
@@ -1299,13 +1303,14 @@ const [aiLoadingId, setAiLoadingId] = useState<string | null>(null);
 
                   {feedback ? (
                     <a
-                      href={feedback.feedbackPdfUrl}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                    >
-                      <Download className="h-4 w-4" /> 피드백 PDF 보기
-                    </a>
+  href={feedback.feedbackPdfUrl}
+  target="_blank"
+  rel="noreferrer"
+  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50 hover:border-violet-300"
+>
+  <span>피드백 PDF</span>
+  <Download className="h-4 w-4" />
+</a>
                   ) : null}
                 </div>
 
@@ -1623,15 +1628,6 @@ function StudentDetail({
                     </div>
 
                     <div className="mt-4 flex flex-wrap gap-3">
-                      <a
-                        href={assignment.pdfUrl}
-                        target="_blank"
-                        rel="noreferrer"
-                        className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-3 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
-                      >
-                        <Download className="h-4 w-4" /> 과제 PDF
-                      </a>
-
                       {submission ? (
                         <a
                           href={submission.pdfUrl}
@@ -1789,12 +1785,20 @@ function StudentAssignments({
       return "submitted";
     }
 
+    const submitState = getSubmissionState(assignment.dueDate);
+
+    if (!submitState.canSubmit) return "closed";
+    if (submitState.status === "late") return "late";
+
     return "assigned";
   };
 
   if (myAssignments.length === 0) {
     return (
-      <SectionCard title="내 과제" description="배정된 과제가 없습니다.">
+      <SectionCard
+        title="내 과제"
+        description="배정된 과제가 없습니다."
+      >
         <div className="rounded-3xl border border-dashed border-slate-200 bg-slate-50 px-6 py-10 text-sm text-slate-500">
           아직 배정된 과제가 없습니다.
         </div>
@@ -1812,7 +1816,10 @@ function StudentAssignments({
           const displayStatus = getDisplayStatus(assignment);
 
           return (
-            <div key={assignment.id} className="glass-card rounded-[32px] p-6">
+            <div
+              key={assignment.id}
+              className="glass-card rounded-[32px] p-6"
+            >
               <div className="mb-4 flex items-start justify-between gap-3">
                 <div>
                   <div className="text-2xl font-bold text-slate-900">
@@ -1828,13 +1835,14 @@ function StudentAssignments({
 
               <div className="flex gap-3">
                 <a
-                  href={assignment.pdfUrl}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="btn-secondary"
-                >
-                  과제 PDF
-                </a>
+  href={assignment.pdfUrl}
+  target="_blank"
+  rel="noreferrer"
+  className="inline-flex items-center gap-2 rounded-2xl border border-slate-200 bg-white px-4 py-2 text-sm font-semibold text-slate-700 transition hover:bg-slate-50"
+>
+  <span>과제 PDF</span>
+  <Download className="h-4 w-4" />
+</a>
 
                 {displayStatus === "submitted" || displayStatus === "late" || displayStatus === "feedback_done" ? (
                   <button
@@ -1843,6 +1851,14 @@ function StudentAssignments({
                     disabled
                   >
                     {displayStatus === "feedback_done" ? "피드백완료" : "피드백 대기중"}
+                  </button>
+                ) : displayStatus === "closed" ? (
+                  <button
+                    type="button"
+                    className="rounded-2xl border border-slate-200 bg-slate-100 px-5 py-3 text-sm font-bold text-slate-500"
+                    disabled
+                  >
+                    제출 마감
                   </button>
                 ) : (
                   <label className="flex-1 cursor-pointer rounded-2xl border border-dashed border-violet-200 bg-violet-50 px-4 py-4 text-sm font-medium text-violet-700 transition hover:bg-violet-100">
@@ -1853,6 +1869,7 @@ function StudentAssignments({
                       className="hidden"
                       onChange={(e) => {
                         const file = e.target.files?.[0] ?? null;
+
                         setSelectedFiles((prev) => ({
                           ...prev,
                           [assignment.id]: file,
@@ -1863,14 +1880,13 @@ function StudentAssignments({
                 )}
               </div>
 
-              {displayStatus !== "submitted" &&
-              displayStatus !== "late" &&
-              displayStatus !== "feedback_done" ? (
+              {displayStatus === "assigned" || displayStatus === "late" ? (
                 <PrimaryButton
                   className="mt-4 w-full"
                   disabled={!selectedFiles[assignment.id] || submittingId === assignment.id}
                   onClick={async () => {
                     const file = selectedFiles[assignment.id];
+
                     if (!file) {
                       alert("먼저 제출할 PDF 파일을 선택해주세요.");
                       return;
@@ -1879,6 +1895,7 @@ function StudentAssignments({
                     try {
                       setSubmittingId(assignment.id);
                       await onSubmitAssignment(assignment, file);
+
                       setSelectedFiles((prev) => ({
                         ...prev,
                         [assignment.id]: null,
@@ -1891,8 +1908,11 @@ function StudentAssignments({
                     }
                   }}
                 >
-                  <Upload className="h-4 w-4" />
-                  {submittingId === assignment.id ? "제출 중..." : "제출하기"}
+                  {submittingId === assignment.id
+                    ? "제출 중..."
+                    : displayStatus === "late"
+                    ? "지연 제출하기"
+                    : "제출하기"}
                 </PrimaryButton>
               ) : null}
 
@@ -1903,6 +1923,10 @@ function StudentAssignments({
                     : displayStatus === "late"
                     ? "지연 제출이 완료되었습니다."
                     : "제출이 완료되었습니다."}
+                </div>
+              ) : displayStatus === "closed" ? (
+                <div className="mt-4 rounded-2xl bg-slate-100 px-4 py-4 text-sm text-slate-600">
+                  제출 시간이 마감되었습니다.
                 </div>
               ) : null}
             </div>
